@@ -29,7 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 transcription = [
   "openai-whisper>=20250625",
-  "pyannote.audio>=3.3,<4",
+  "pyannote.audio>=3.3,<5",
   "torch>=2.2,<3",
 ]
 dev = [
