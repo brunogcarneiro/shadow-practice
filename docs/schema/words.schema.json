@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/brunogcarneiro/shadow-practice/blob/main/docs/schema/words.schema.json",
+  "title": "Shadow Practice words transcript",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "required": ["word", "start", "end", "speaker"],
+        "properties": {
+          "word": {"type": "string"},
+          "start": {"type": "number", "minimum": 0},
+          "end": {"type": "number", "minimum": 0},
+          "speaker": {"type": "string"},
+          "discovered": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      },
+      {
+        "type": "object",
+        "anyOf": [{"required": ["displayed"]}, {"required": ["linebreak"]}],
+        "properties": {
+          "displayed": {"type": "boolean"},
+          "linebreak": {"type": "boolean"},
+          "human-transcription": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    ]
+  }
+}

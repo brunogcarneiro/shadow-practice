@@ -1,0 +1,1 @@
+"""Optional wxPython smoke tests."""

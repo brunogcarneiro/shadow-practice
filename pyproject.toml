@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadow-practice"
+version = "0.1.0"
+description = "A macOS desktop app for recording meetings and practicing spoken English with timestamped transcripts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Bruno Carneiro"}]
+keywords = ["shadowing", "language-learning", "transcription", "macos"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3.10",
+]
+dependencies = [
+  "numpy>=1.24,<3",
+  "pydub>=0.25,<0.26",
+  "requests>=2.31,<3",
+  "sounddevice>=0.4,<1",
+  "soundfile>=0.12,<1",
+  "simpleaudio>=1.0,<2",
+  "wxPython>=4.2,<5",
+]
+
+[project.optional-dependencies]
+transcription = [
+  "openai-whisper>=20250625",
+  "pyannote.audio>=3.3,<4",
+  "torch>=2.2,<3",
+]
+dev = [
+  "build>=1.2,<2",
+  "pytest>=8,<9",
+  "pytest-cov>=5,<7",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+shadow-practice = "shadow_practice.cli:main"
+shadow-practice-tts = "shadow_practice.infrastructure.qwen_tts_service:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["build", "dist", "venv", "qwen-tts-venv", "src/*.egg-info"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=shadow_practice --cov-report=term-missing"
+
+[tool.unittest]
+start-directory = "tests"
+pattern = "test_*.py"

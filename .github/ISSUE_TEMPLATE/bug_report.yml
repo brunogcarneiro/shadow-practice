@@ -1,0 +1,21 @@
+name: Bug report
+description: Report a reproducible problem without private recordings or transcripts.
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: macOS, hardware, and Python versions
+    validations:
+      required: true
