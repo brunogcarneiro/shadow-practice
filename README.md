@@ -28,8 +28,9 @@ python -m pip install -e '.[transcription]'
 cp .env.example .env
 ```
 
-Export the values from `.env` in your shell. Set `HUGGINGFACE_TOKEN` to a token that
-can access the gated pyannote diarization model. See [macOS setup](docs/macos-setup.md).
+The application loads `.env` automatically; variables already exported by the shell
+take precedence. Set `HUGGINGFACE_TOKEN` to a token that can access the gated pyannote
+diarization model. See [macOS setup](docs/macos-setup.md).
 
 ## Quick start
 

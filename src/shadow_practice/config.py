@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -22,7 +24,11 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    """Read settings at call time so tests and shells can change the environment."""
+    """Load ``.env`` and read settings at call time.
+
+    Existing shell variables take precedence over values in ``.env``.
+    """
+    load_dotenv(override=False)
     return Settings(
         recordings_dir=Path(os.getenv("SHADOW_PRACTICE_RECORDINGS_DIR", "recordings")).expanduser(),
         audio_device=os.getenv("SHADOW_PRACTICE_AUDIO_DEVICE", "Aggregate Device"),

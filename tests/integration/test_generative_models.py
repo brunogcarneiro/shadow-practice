@@ -69,7 +69,10 @@ class GenerativeModelManagerTests(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
 
     def test_rewrite_requires_api_key(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("shadow_practice.config.load_dotenv"),
+        ):
             with self.assertRaisesRegex(GenerativeModelError, "OPENAI_API_KEY"):
                 self.manager.rewrite_meeting_speech("Text")
 

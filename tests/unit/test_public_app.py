@@ -24,6 +24,17 @@ class PublicAppTests(unittest.TestCase):
         self.assertEqual(settings.audio_device, "Test Device")
         self.assertTrue(settings.debug)
 
+    def test_configuration_loads_dotenv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dotenv = Path(directory) / ".env"
+            dotenv.write_text("OPENAI_API_KEY=test-from-dotenv\n", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch("shadow_practice.config.load_dotenv") as load,
+            ):
+                get_settings()
+            load.assert_called_once_with(override=False)
+
     def test_processed_recording_requires_a_valid_group_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             audio = Path(directory) / "sample.wav"
