@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Callable
 
 import requests
 
@@ -153,7 +154,10 @@ def chunk_words(words, max_words):
         yield words[i:i + max_words]
 
 
-def group_words_file(words_path):
+def group_words_file(
+    words_path,
+    progress_callback: Callable[[int, int], None] | None = None,
+):
     """Atualiza um ``.words.json`` bruto com marcadores de grupos de sentido."""
     words_path = os.fspath(words_path)
     with open(words_path, encoding="utf-8") as source:
@@ -164,6 +168,10 @@ def group_words_file(words_path):
     turns = build_turns(words)
     output_words = []
 
+    total_chunks = sum(
+        len(list(chunk_words(turn["words"], MAX_WORDS_PER_CALL))) for turn in turns
+    )
+    completed_chunks = 0
     for t, turn in enumerate(turns, start=1):
         chunks = list(chunk_words(turn["words"], MAX_WORDS_PER_CALL))
         for c, chunk in enumerate(chunks, start=1):
@@ -172,6 +180,9 @@ def group_words_file(words_path):
             for group_words in groups:
                 output_words.append({"displayed": False, "human-transcription": ""})
                 output_words.extend(with_default_discovered(word) for word in group_words)
+            completed_chunks += 1
+            if progress_callback is not None:
+                progress_callback(completed_chunks, total_chunks)
 
     with open(words_path, "w", encoding="utf-8") as output:
         json.dump(output_words, output, ensure_ascii=False, indent=2)

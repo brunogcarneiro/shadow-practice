@@ -41,6 +41,9 @@ class ShadowPracticeFrame(wx.Frame):
         self.recorder = RecordingController()
         self.selected_recording: Path | None = None
         self.processing_recordings: set[Path] = set()
+        self.processing_progress: dict[Path, tuple[int, str]] = {}
+        self.processing_gauges: dict[Path, wx.Gauge] = {}
+        self.processing_labels: dict[Path, wx.StaticText] = {}
         self.player_frame: TranscriptPlayer | None = None
 
         panel = wx.Panel(self)
@@ -154,6 +157,8 @@ class ShadowPracticeFrame(wx.Frame):
         )
 
     def refresh_recordings(self) -> None:
+        self.processing_gauges.clear()
+        self.processing_labels.clear()
         self.recordings_rows.Clear(delete_windows=True)
         recordings = self.available_recordings()
         if self.selected_recording not in recordings:
@@ -179,17 +184,27 @@ class ShadowPracticeFrame(wx.Frame):
 
         processing = recording in self.processing_recordings
         processed = is_processed_recording(recording)
-        process_button = wx.Button(row, label="Processar", size=(105, -1))
-        process_button.recording_path = recording
-        process_button.Enable(not processed and not processing)
         if processing:
-            process_button.SetLabel("Processando…")
-        sizer.Add(process_button, 0, wx.ALL, 4)
+            percent, message = self.processing_progress.get(recording, (1, "Preparando…"))
+            progress_sizer = wx.BoxSizer(wx.VERTICAL)
+            progress_label = wx.StaticText(row, label=f"{message} {percent}%")
+            progress_sizer.Add(progress_label, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.BOTTOM, 3)
+            progress = wx.Gauge(row, range=100, size=(105, 12), style=wx.GA_HORIZONTAL)
+            progress.SetValue(percent)
+            self.processing_gauges[recording] = progress
+            self.processing_labels[recording] = progress_label
+            progress_sizer.Add(progress, 0, wx.EXPAND)
+            sizer.Add(progress_sizer, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        else:
+            process_button = wx.Button(row, label="Processar", size=(105, -1))
+            process_button.recording_path = recording
+            process_button.Enable(not processed)
+            process_button.Bind(wx.EVT_BUTTON, self.on_process_recording)
+            sizer.Add(process_button, 0, wx.ALL, 4)
         row.SetSizer(sizer)
 
         row.Bind(wx.EVT_LEFT_DOWN, self.on_recording_selected)
         name.Bind(wx.EVT_LEFT_DOWN, self.on_recording_selected)
-        process_button.Bind(wx.EVT_BUTTON, self.on_process_recording)
         return row
 
     def on_recording_selected(self, event: wx.MouseEvent) -> None:
@@ -207,6 +222,7 @@ class ShadowPracticeFrame(wx.Frame):
         if recording in self.processing_recordings or is_processed_recording(recording):
             return
         self.processing_recordings.add(recording)
+        self.processing_progress[recording] = (1, "Preparando…")
         self.refresh_recordings()
         threading.Thread(
             target=self._process_recording_worker,
@@ -217,15 +233,42 @@ class ShadowPracticeFrame(wx.Frame):
 
     def _process_recording_worker(self, recording: Path) -> None:
         try:
-            words_path = transcribe_recording(recording)
-            group_words_file(words_path)
+            words_path = transcribe_recording(
+                recording,
+                progress_callback=lambda percent, message: wx.CallAfter(
+                    self._set_processing_progress, recording, percent, message
+                ),
+            )
+            group_words_file(
+                words_path,
+                progress_callback=lambda completed, total: wx.CallAfter(
+                    self._set_processing_progress,
+                    recording,
+                    90 + round(9 * completed / max(1, total)),
+                    "Criando sense groups…",
+                ),
+            )
         except Exception as error:
             wx.CallAfter(self._finish_processing, recording, str(error))
             return
         wx.CallAfter(self._finish_processing, recording, None)
 
+    def _set_processing_progress(
+        self, recording: Path, percent: int, message: str
+    ) -> None:
+        percent = max(0, min(100, int(percent)))
+        self.processing_progress[recording] = (percent, message)
+        gauge = self.processing_gauges.get(recording)
+        label = self.processing_labels.get(recording)
+        if gauge is not None and not gauge.IsBeingDeleted():
+            gauge.SetValue(percent)
+        if label is not None and not label.IsBeingDeleted():
+            label.SetLabel(f"{message} {percent}%")
+            label.GetParent().Layout()
+
     def _finish_processing(self, recording: Path, error: str | None) -> None:
         self.processing_recordings.discard(recording)
+        self.processing_progress.pop(recording, None)
         self.refresh_recordings()
         if error:
             wx.MessageBox(

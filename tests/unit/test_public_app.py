@@ -59,7 +59,9 @@ class PublicAppTests(unittest.TestCase):
             patch("shadow_practice.presentation.wx.launcher.wx.CallAfter") as call_after,
         ):
             frame._process_recording_worker(recording)
-        group.assert_called_once_with(Path("synthetic.words.json"))
+        group.assert_called_once()
+        self.assertEqual(group.call_args.args, (Path("synthetic.words.json"),))
+        self.assertTrue(callable(group.call_args.kwargs["progress_callback"]))
         call_after.assert_called_once_with(frame._finish_processing, recording, None)
 
     def test_json_schemas_are_valid_json_objects(self):
