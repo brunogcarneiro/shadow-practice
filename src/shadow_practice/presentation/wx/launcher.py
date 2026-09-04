@@ -236,19 +236,56 @@ class ShadowPracticeFrame(wx.Frame):
         recording = event.GetEventObject().recording_path
         if recording in self.processing_recordings or is_processed_recording(recording):
             return
+        choice = wx.SingleChoiceDialog(
+            self,
+            "Como deseja processar esta gravação?",
+            "Modo de processamento",
+            [
+                "Transcrever o áudio normalmente",
+                "Importar transcrição e alinhar ao áudio",
+            ],
+        )
+        if choice.ShowModal() != wx.ID_OK:
+            choice.Destroy()
+            return
+        selected_mode = choice.GetSelection()
+        choice.Destroy()
+
+        transcript_path = None
+        if selected_mode == 1:
+            file_dialog = wx.FileDialog(
+                self,
+                "Selecione a transcrição exportada",
+                wildcard="Arquivos de texto (*.txt)|*.txt|Todos os arquivos|*.*",
+                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+            )
+            if file_dialog.ShowModal() != wx.ID_OK:
+                file_dialog.Destroy()
+                return
+            transcript_path = Path(file_dialog.GetPath())
+            file_dialog.Destroy()
+
+        self._start_processing(recording, transcript_path)
+
+    def _start_processing(
+        self, recording: Path, transcript_path: Path | None = None
+    ) -> None:
         self.processing_recordings.add(recording)
-        self.processing_progress[recording] = (1, "Preparando…")
+        mode = "alinhamento forçado" if transcript_path is not None else "transcrição"
+        self.processing_progress[recording] = (1, f"Preparando {mode}…")
         self.processing_logs[recording] = []
         self.processing_cancelled.discard(recording)
         self.refresh_recordings()
         threading.Thread(
             target=self._run_processing_subprocess,
-            args=(recording,),
+            args=(recording, transcript_path),
             daemon=True,
             name=f"process-{recording.stem}",
         ).start()
 
-    def _run_processing_subprocess(self, recording: Path) -> None:
+    def _run_processing_subprocess(
+        self, recording: Path, transcript_path: Path | None = None
+    ) -> None:
         source_root = Path(__file__).resolve().parents[3]
         environment = os.environ.copy()
         existing_pythonpath = environment.get("PYTHONPATH")
@@ -256,13 +293,16 @@ class ShadowPracticeFrame(wx.Frame):
             value for value in (str(source_root), existing_pythonpath) if value
         )
         try:
+            command = [
+                sys.executable,
+                "-m",
+                "shadow_practice.application.processing_worker",
+                str(recording.resolve()),
+            ]
+            if transcript_path is not None:
+                command.extend(("--transcript", str(transcript_path.resolve())))
             process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "shadow_practice.application.processing_worker",
-                    str(recording.resolve()),
-                ],
+                command,
                 cwd=recording.resolve().parent,
                 env=environment,
                 stdout=subprocess.PIPE,

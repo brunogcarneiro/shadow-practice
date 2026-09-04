@@ -33,6 +33,9 @@ transcription = [
   "pyannote.audio>=3.3,<4",
   "torch>=2.2,<3",
 ]
+alignment = [
+  "qwen-asr>=0.0.1,<1",
+]
 dev = [
   "build>=1.2,<2",
   "pytest>=8,<9",

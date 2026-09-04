@@ -44,6 +44,12 @@ Recordings are written to `recordings/` by default. Select a recording, process 
 then open it for practice. Existing `.words.json` and `.speaks.json` files remain
 compatible; their formats are described in [schemas](docs/schemas.md).
 
+When processing, choose either full audio transcription or import a text transcript
+for forced alignment. Enable the latter with
+`python -m pip install -e '.[alignment]'`. Long imported transcripts must contain
+timestamps (for example `Speaker Name 00:01:23 spoken text`) so they can be divided
+into the aligner's five-minute input windows.
+
 ## Optional local Qwen TTS
 
 Qwen TTS must run in a separate Python 3.12 environment because its dependency stack

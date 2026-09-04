@@ -1,11 +1,16 @@
 import json
 import os
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from shadow_practice.config import get_settings
+from shadow_practice.infrastructure.forced_alignment import (
+    align_transcript_file,
+    parse_timestamped_transcript,
+)
 from shadow_practice.presentation.wx.launcher import ShadowPracticeFrame, is_processed_recording
 
 
@@ -92,6 +97,45 @@ class PublicAppTests(unittest.TestCase):
         for name in ("words.schema.json", "speaks.schema.json"):
             payload = json.loads((root / "docs" / "schema" / name).read_text(encoding="utf-8"))
             self.assertEqual(payload["$schema"], "https://json-schema.org/draft/2020-12/schema")
+
+    def test_google_meet_transcript_blocks_are_parsed(self):
+        blocks = parse_timestamped_transcript(
+            "Bruno Carneiro 00:01:02\nHello from the meeting.\n"
+            "00:01:10 Ana: This is the next speaker."
+        )
+        self.assertEqual(
+            [(block.start, block.speaker, block.text) for block in blocks],
+            [
+                (62, "Bruno Carneiro", "Hello from the meeting."),
+                (70, "Ana", "This is the next speaker."),
+            ],
+        )
+
+    def test_forced_alignment_writes_compatible_words_file(self):
+        aligned_item = types.SimpleNamespace(text="Hello", start_time=0.2, end_time=0.7)
+        aligner = Mock()
+        aligner.align.return_value = [[aligned_item]]
+        aligner_type = Mock()
+        aligner_type.from_pretrained.return_value = aligner
+        qwen_module = types.SimpleNamespace(Qwen3ForcedAligner=aligner_type)
+
+        with tempfile.TemporaryDirectory() as directory:
+            import numpy as np
+            import soundfile as sf
+
+            audio = Path(directory) / "meeting.wav"
+            transcript = Path(directory) / "meeting.txt"
+            sf.write(audio, np.zeros(16_000, dtype=np.float32), 16_000)
+            transcript.write_text("Bruno 00:00 Hello", encoding="utf-8")
+
+            with patch.dict("sys.modules", {"qwen_asr": qwen_module}):
+                output = align_transcript_file(audio, transcript)
+
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                [{"word": "Hello", "start": 0.2, "end": 0.7, "speaker": "Bruno"}],
+            )
+            aligner.align.assert_called_once()
 
 
 if __name__ == "__main__":
