@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from shadow_practice.config import get_settings
 from shadow_practice.presentation.wx.launcher import ShadowPracticeFrame, is_processed_recording
@@ -47,22 +47,45 @@ class PublicAppTests(unittest.TestCase):
             words.write_text("not json", encoding="utf-8")
             self.assertFalse(is_processed_recording(audio))
 
-    def test_processing_worker_reports_success_without_real_models(self):
+    def test_processing_output_updates_structured_progress(self):
         frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)
         recording = Path("synthetic.wav")
-        with (
-            patch(
-                "shadow_practice.presentation.wx.launcher.transcribe_recording",
-                return_value=Path("synthetic.words.json"),
+        frame.processing_logs = {recording: []}
+        frame.processing_progress = {}
+        frame.processing_gauges = {}
+        frame.processing_labels = {}
+        frame.processing_detail_frames = {}
+        frame._handle_processing_output(
+            recording,
+            json.dumps(
+                {
+                    "timestamp": "2026-09-04T10:00:00-03:00",
+                    "percent": 42,
+                    "stage": "transcription",
+                    "data": {"processed_seconds": 60, "total_seconds": 120},
+                    "description": "Transcrevendo áudio…",
+                }
             ),
-            patch("shadow_practice.presentation.wx.launcher.group_words_file") as group,
-            patch("shadow_practice.presentation.wx.launcher.wx.CallAfter") as call_after,
-        ):
-            frame._process_recording_worker(recording)
-        group.assert_called_once()
-        self.assertEqual(group.call_args.args, (Path("synthetic.words.json"),))
-        self.assertTrue(callable(group.call_args.kwargs["progress_callback"]))
-        call_after.assert_called_once_with(frame._finish_processing, recording, None)
+        )
+        self.assertEqual(frame.processing_progress[recording], (42, "Transcrevendo áudio…"))
+        self.assertEqual(frame.processing_logs[recording][0]["stage"], "transcription")
+
+    def test_interrupt_terminates_the_subprocess(self):
+        frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)
+        recording = Path("synthetic.wav")
+        process = Mock()
+        process.poll.return_value = None
+        frame.processing_recordings = {recording}
+        frame.processing_cancelled = set()
+        frame.processing_jobs = {recording: process}
+        frame.processing_logs = {recording: []}
+        frame.processing_progress = {}
+        frame.processing_gauges = {}
+        frame.processing_labels = {}
+        frame.processing_detail_frames = {}
+        frame.interrupt_processing(recording)
+        process.terminate.assert_called_once_with()
+        self.assertIn(recording, frame.processing_cancelled)
 
     def test_json_schemas_are_valid_json_objects(self):
         root = Path(__file__).resolve().parents[2]

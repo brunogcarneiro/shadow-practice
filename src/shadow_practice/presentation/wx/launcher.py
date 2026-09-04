@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import wx
 
-from ...application.sense_groups import group_words_file
 from ...config import get_settings
 from ...infrastructure.recording import RecordingController
-from ...infrastructure.transcription import transcribe_recording
 from .main_frame import TranscriptPlayer
+from .processing_details import ProcessingDetailsFrame
 
 
 def is_processed_recording(audio_path: Path) -> bool:
@@ -42,6 +45,10 @@ class ShadowPracticeFrame(wx.Frame):
         self.selected_recording: Path | None = None
         self.processing_recordings: set[Path] = set()
         self.processing_progress: dict[Path, tuple[int, str]] = {}
+        self.processing_logs: dict[Path, list[dict]] = {}
+        self.processing_jobs: dict[Path, subprocess.Popen] = {}
+        self.processing_cancelled: set[Path] = set()
+        self.processing_detail_frames: dict[Path, ProcessingDetailsFrame] = {}
         self.processing_gauges: dict[Path, wx.Gauge] = {}
         self.processing_labels: dict[Path, wx.StaticText] = {}
         self.player_frame: TranscriptPlayer | None = None
@@ -195,6 +202,14 @@ class ShadowPracticeFrame(wx.Frame):
             self.processing_labels[recording] = progress_label
             progress_sizer.Add(progress, 0, wx.EXPAND)
             sizer.Add(progress_sizer, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+            stop_button = wx.Button(row, label="Interromper", size=(90, -1))
+            stop_button.recording_path = recording
+            stop_button.Bind(wx.EVT_BUTTON, self.on_interrupt_processing)
+            details_button = wx.Button(row, label="Detalhes", size=(75, -1))
+            details_button.recording_path = recording
+            details_button.Bind(wx.EVT_BUTTON, self.on_show_processing_details)
+            sizer.Add(stop_button, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+            sizer.Add(details_button, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         else:
             process_button = wx.Button(row, label="Processar", size=(105, -1))
             process_button.recording_path = recording
@@ -223,35 +238,113 @@ class ShadowPracticeFrame(wx.Frame):
             return
         self.processing_recordings.add(recording)
         self.processing_progress[recording] = (1, "Preparando…")
+        self.processing_logs[recording] = []
+        self.processing_cancelled.discard(recording)
         self.refresh_recordings()
         threading.Thread(
-            target=self._process_recording_worker,
+            target=self._run_processing_subprocess,
             args=(recording,),
             daemon=True,
             name=f"process-{recording.stem}",
         ).start()
 
-    def _process_recording_worker(self, recording: Path) -> None:
+    def _run_processing_subprocess(self, recording: Path) -> None:
+        source_root = Path(__file__).resolve().parents[3]
+        environment = os.environ.copy()
+        existing_pythonpath = environment.get("PYTHONPATH")
+        environment["PYTHONPATH"] = os.pathsep.join(
+            value for value in (str(source_root), existing_pythonpath) if value
+        )
         try:
-            words_path = transcribe_recording(
-                recording,
-                progress_callback=lambda percent, message: wx.CallAfter(
-                    self._set_processing_progress, recording, percent, message
-                ),
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "shadow_practice.application.processing_worker",
+                    str(recording.resolve()),
+                ],
+                cwd=recording.resolve().parent,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
             )
-            group_words_file(
-                words_path,
-                progress_callback=lambda completed, total: wx.CallAfter(
-                    self._set_processing_progress,
-                    recording,
-                    90 + round(9 * completed / max(1, total)),
-                    "Criando sense groups…",
-                ),
-            )
+            wx.CallAfter(self._register_processing_job, recording, process)
+            assert process.stdout is not None
+            for line in process.stdout:
+                wx.CallAfter(self._handle_processing_output, recording, line.rstrip())
+            return_code = process.wait()
         except Exception as error:
             wx.CallAfter(self._finish_processing, recording, str(error))
             return
-        wx.CallAfter(self._finish_processing, recording, None)
+        wx.CallAfter(
+            self._finish_processing,
+            recording,
+            None if return_code == 0 else "Processing failed.",
+            recording in self.processing_cancelled,
+        )
+
+    def _register_processing_job(self, recording: Path, process: subprocess.Popen) -> None:
+        if recording not in self.processing_recordings or recording in self.processing_cancelled:
+            process.terminate()
+            return
+        self.processing_jobs[recording] = process
+
+    def _handle_processing_output(self, recording: Path, line: str) -> None:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            event = {
+                "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "stage": "system",
+                "data": {},
+                "description": line,
+            }
+        if not isinstance(event, dict):
+            return
+        self.processing_logs.setdefault(recording, []).append(event)
+        if "percent" in event:
+            self._set_processing_progress(
+                recording,
+                event["percent"],
+                str(event.get("description", event.get("stage", "Processing…"))),
+            )
+        details = self.processing_detail_frames.get(recording)
+        if details is not None and not details.IsBeingDeleted():
+            details.refresh()
+
+    def on_interrupt_processing(self, event: wx.CommandEvent) -> None:
+        self.interrupt_processing(event.GetEventObject().recording_path)
+
+    def interrupt_processing(self, recording: Path) -> None:
+        if recording not in self.processing_recordings:
+            return
+        self.processing_cancelled.add(recording)
+        process = self.processing_jobs.get(recording)
+        if process is not None and process.poll() is None:
+            process.terminate()
+        self._handle_processing_output(
+            recording,
+            json.dumps(
+                {
+                    "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "stage": "interruption",
+                    "data": {"requested": True},
+                    "description": "Interrupção solicitada pelo usuário.",
+                }
+            ),
+        )
+
+    def on_show_processing_details(self, event: wx.CommandEvent) -> None:
+        recording = event.GetEventObject().recording_path
+        frame = self.processing_detail_frames.get(recording)
+        if frame is None or frame.IsBeingDeleted():
+            frame = ProcessingDetailsFrame(self, recording)
+            self.processing_detail_frames[recording] = frame
+        self.Hide()
+        frame.Show()
+        frame.Raise()
 
     def _set_processing_progress(
         self, recording: Path, percent: int, message: str
@@ -266,11 +359,18 @@ class ShadowPracticeFrame(wx.Frame):
             label.SetLabel(f"{message} {percent}%")
             label.GetParent().Layout()
 
-    def _finish_processing(self, recording: Path, error: str | None) -> None:
+    def _finish_processing(
+        self, recording: Path, error: str | None, cancelled: bool = False
+    ) -> None:
         self.processing_recordings.discard(recording)
         self.processing_progress.pop(recording, None)
+        self.processing_jobs.pop(recording, None)
         self.refresh_recordings()
-        if error:
+        details = self.processing_detail_frames.get(recording)
+        if details is not None and not details.IsBeingDeleted():
+            details.refresh()
+        self.processing_cancelled.discard(recording)
+        if error and not cancelled:
             wx.MessageBox(
                 f"Não foi possível processar {recording.name}.\n\n{error}",
                 "Erro no processamento",
@@ -306,6 +406,9 @@ class ShadowPracticeFrame(wx.Frame):
     def on_close(self, event: wx.CloseEvent) -> None:
         if self.recorder.is_recording:
             self.recorder.stop(self._set_status)
+        for process in self.processing_jobs.values():
+            if process.poll() is None:
+                process.terminate()
         event.Skip()
 
 
