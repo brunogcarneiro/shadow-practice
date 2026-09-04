@@ -99,6 +99,7 @@ class ShadowPracticeFrame(wx.Frame):
         self.processing_detail_frames: dict[Path, ProcessingDetailsFrame] = {}
         self.processing_gauges: dict[Path, wx.Gauge] = {}
         self.processing_labels: dict[Path, wx.StaticText] = {}
+        self.process_buttons: dict[Path, wx.Button] = {}
         self.player_frame: TranscriptPlayer | None = None
 
         panel = wx.Panel(self)
@@ -220,6 +221,7 @@ class ShadowPracticeFrame(wx.Frame):
     def refresh_recordings(self) -> None:
         self.processing_gauges.clear()
         self.processing_labels.clear()
+        self.process_buttons.clear()
         self.recordings_rows.Clear(delete_windows=True)
         recordings = self.available_recordings()
         if self.selected_recording not in recordings:
@@ -282,6 +284,7 @@ class ShadowPracticeFrame(wx.Frame):
             process_button.recording_path = recording
             process_button.Enable(not processed)
             process_button.Bind(wx.EVT_BUTTON, self.on_process_recording)
+            self.process_buttons[recording] = process_button
             sizer.Add(process_button, 0, wx.ALL, 4)
             delete_button = wx.Button(row, label="Excluir…", size=(85, -1))
             delete_button.recording_path = recording
@@ -386,7 +389,14 @@ class ShadowPracticeFrame(wx.Frame):
         if include_audio:
             self.selected_recording = None
         self.processing_logs.pop(recording, None)
-        self.refresh_recordings()
+        process_button = self.process_buttons.get(recording)
+        if process_button is not None and not process_button.IsBeingDeleted():
+            process_button.Enable(not include_audio and not is_processed_recording(recording))
+        if self.selected_recording == recording:
+            self.practice_button.Disable()
+        # Rebuilding here destroys the button that is still dispatching this
+        # click event. Defer it to avoid stale/disabled controls on wx/Cocoa.
+        wx.CallAfter(self.refresh_recordings)
         if not deleted:
             wx.MessageBox(
                 "Nenhum arquivo produzido pelo processamento foi encontrado.",

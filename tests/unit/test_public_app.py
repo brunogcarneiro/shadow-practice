@@ -77,9 +77,12 @@ class PublicAppTests(unittest.TestCase):
             unrelated = audio.with_suffix(".txt")
             for path in (audio, words, speaks, unrelated):
                 path.touch()
+            words.write_text('[{"displayed": false}]', encoding="utf-8")
 
+            self.assertTrue(is_processed_recording(audio))
             self.assertEqual(processing_artifacts(audio), [words, speaks])
             self.assertEqual(delete_recording_data(audio), [words, speaks])
+            self.assertFalse(is_processed_recording(audio))
             self.assertTrue(audio.exists())
             self.assertTrue(unrelated.exists())
 
