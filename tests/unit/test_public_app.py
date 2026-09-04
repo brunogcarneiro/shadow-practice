@@ -118,6 +118,7 @@ class PublicAppTests(unittest.TestCase):
         aligner_type = Mock()
         aligner_type.from_pretrained.return_value = aligner
         qwen_module = types.SimpleNamespace(Qwen3ForcedAligner=aligner_type)
+        torch_module = types.SimpleNamespace(float32="float32")
 
         with tempfile.TemporaryDirectory() as directory:
             import numpy as np
@@ -128,7 +129,9 @@ class PublicAppTests(unittest.TestCase):
             sf.write(audio, np.zeros(16_000, dtype=np.float32), 16_000)
             transcript.write_text("Bruno 00:00 Hello", encoding="utf-8")
 
-            with patch.dict("sys.modules", {"qwen_asr": qwen_module}):
+            with patch.dict(
+                "sys.modules", {"qwen_asr": qwen_module, "torch": torch_module}
+            ):
                 output = align_transcript_file(audio, transcript)
 
             self.assertEqual(

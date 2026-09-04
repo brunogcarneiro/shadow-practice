@@ -60,9 +60,9 @@ def align_transcript_file(
 ) -> Path:
     """Create a raw ``.words.json`` from an existing transcript and audio."""
     import soundfile as sf
-    import torch
 
     try:
+        import torch
         from qwen_asr import Qwen3ForcedAligner
     except ModuleNotFoundError as error:
         raise RuntimeError(
