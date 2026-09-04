@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -159,6 +160,39 @@ def _speaker_for_item(index: int, item_count: int, block: TranscriptBlock) -> st
     return block.turns[-1].speaker
 
 
+def _safe_alignment_times(result, duration: float) -> list[tuple[float, float]]:
+    """Use model times when valid, or evenly distribute units in the block."""
+    if not result:
+        return []
+    previous_end = 0.0
+    valid = True
+    for item in result:
+        start = float(item.start_time)
+        end = float(item.end_time)
+        if (
+            not math.isfinite(start)
+            or not math.isfinite(end)
+            or start < previous_end
+            or end <= start
+            or end > duration + 0.001
+        ):
+            valid = False
+            break
+        previous_end = end
+    if valid:
+        return [(float(item.start_time), float(item.end_time)) for item in result]
+
+    weights = [max(1, len(str(item.text).strip())) for item in result]
+    total_weight = sum(weights)
+    cursor = 0.0
+    times = []
+    for weight in weights:
+        start = cursor
+        cursor += duration * weight / total_weight
+        times.append((start, cursor))
+    return times
+
+
 def align_transcript_file(
     audio_path: Path,
     transcript_path: Path,
@@ -233,19 +267,31 @@ def align_transcript_file(
         result = aligner.align(
             audio=(clip, sample_rate), text=block.text, language="English"
         )[0]
-        for item_index, item in enumerate(result):
+        alignment_times = _safe_alignment_times(result, end - block.start)
+        used_fallback = any(
+            (start, finish) != (float(item.start_time), float(item.end_time))
+            for item, (start, finish) in zip(result, alignment_times)
+        )
+        for item_index, (item, (start_time, end_time)) in enumerate(
+            zip(result, alignment_times)
+        ):
             words.append(
                 {
                     "word": item.text,
-                    "start": round(block.start + item.start_time, 3),
-                    "end": round(block.start + item.end_time, 3),
+                    "start": round(block.start + start_time, 3),
+                    "end": round(block.start + end_time, 3),
                     "speaker": _speaker_for_item(item_index, len(result), block),
                 }
             )
         report(
             index + 1,
             total,
-            {"speaker": block.speaker, "start": block.start, "end": end},
+            {
+                "speaker": block.speaker,
+                "start": block.start,
+                "end": end,
+                "fallback_timing": used_fallback,
+            },
         )
 
     output_path = audio_path.with_suffix(".words.json")
