@@ -10,6 +10,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import soundfile as sf
 import wx
 
 from ...config import get_settings
@@ -36,11 +37,58 @@ def is_processed_recording(audio_path: Path) -> bool:
     )
 
 
+def processing_artifacts(audio_path: Path) -> list[Path]:
+    """Return processing-owned files associated with an audio recording."""
+    return [
+        path
+        for path in (
+            audio_path.with_suffix(".words.json"),
+            audio_path.with_suffix(".speaks.json"),
+        )
+        if path.is_file()
+    ]
+
+
+def delete_recording_data(audio_path: Path, include_audio: bool = False) -> list[Path]:
+    """Delete generated artifacts and, when requested, the source audio."""
+    targets = processing_artifacts(audio_path)
+    if include_audio and audio_path.is_file():
+        targets.append(audio_path)
+    for target in targets:
+        target.unlink()
+    return targets
+
+
+def audio_file_details(audio_path: Path) -> tuple[str, str]:
+    """Return compact duration and binary-size labels for a WAV file."""
+    try:
+        duration = max(0, round(float(sf.info(audio_path).duration)))
+        hours, remainder = divmod(duration, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        duration_label = (
+            f"{hours}:{minutes:02d}:{seconds:02d}"
+            if hours
+            else f"{minutes}:{seconds:02d}"
+        )
+        size = audio_path.stat().st_size
+    except (OSError, RuntimeError, ValueError):
+        return "—", "—"
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    amount = float(size)
+    unit = units[0]
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            break
+        amount /= 1024
+    size_label = f"{amount:.1f} {unit}" if unit != "B" else f"{size} B"
+    return duration_label, size_label
+
+
 class ShadowPracticeFrame(wx.Frame):
     """Tela inicial: gravação, processamento e seleção para prática."""
 
     def __init__(self):
-        super().__init__(None, title="Shadow Practice", size=(780, 560))
+        super().__init__(None, title="Shadow Practice", size=(1040, 560))
         self.recorder = RecordingController()
         self.selected_recording: Path | None = None
         self.processing_recordings: set[Path] = set()
@@ -112,12 +160,18 @@ class ShadowPracticeFrame(wx.Frame):
         header.SetBackgroundColour(wx.Colour(235, 235, 235))
         sizer = wx.BoxSizer(wx.HORIZONTAL)
         name = wx.StaticText(header, label="Arquivo")
+        duration = wx.StaticText(header, label="Duração", size=(75, -1))
+        size = wx.StaticText(header, label="Tamanho", size=(85, -1))
         process = wx.StaticText(header, label="Processamento")
         font = name.GetFont()
         font.MakeBold()
         name.SetFont(font)
+        duration.SetFont(font)
+        size.SetFont(font)
         process.SetFont(font)
         sizer.Add(name, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        sizer.Add(duration, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        sizer.Add(size, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         sizer.Add(process, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header.SetSizer(sizer)
         return header
@@ -188,6 +242,19 @@ class ShadowPracticeFrame(wx.Frame):
         name = wx.StaticText(row, label=recording.name)
         name.recording_path = recording
         sizer.Add(name, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 7)
+        duration, size = audio_file_details(recording)
+        sizer.Add(
+            wx.StaticText(row, label=duration, size=(75, -1)),
+            0,
+            wx.ALL | wx.ALIGN_CENTER_VERTICAL,
+            6,
+        )
+        sizer.Add(
+            wx.StaticText(row, label=size, size=(85, -1)),
+            0,
+            wx.ALL | wx.ALIGN_CENTER_VERTICAL,
+            6,
+        )
 
         processing = recording in self.processing_recordings
         processed = is_processed_recording(recording)
@@ -216,6 +283,10 @@ class ShadowPracticeFrame(wx.Frame):
             process_button.Enable(not processed)
             process_button.Bind(wx.EVT_BUTTON, self.on_process_recording)
             sizer.Add(process_button, 0, wx.ALL, 4)
+            delete_button = wx.Button(row, label="Excluir…", size=(85, -1))
+            delete_button.recording_path = recording
+            delete_button.Bind(wx.EVT_BUTTON, self.on_delete_recording)
+            sizer.Add(delete_button, 0, wx.ALL, 4)
         row.SetSizer(sizer)
 
         row.Bind(wx.EVT_LEFT_DOWN, self.on_recording_selected)
@@ -266,6 +337,63 @@ class ShadowPracticeFrame(wx.Frame):
             file_dialog.Destroy()
 
         self._start_processing(recording, transcript_path)
+
+    def on_delete_recording(self, event: wx.CommandEvent) -> None:
+        recording = event.GetEventObject().recording_path
+        if recording in self.processing_recordings:
+            return
+        choice = wx.SingleChoiceDialog(
+            self,
+            f"O que deseja excluir de {recording.name}?",
+            "Excluir dados da gravação",
+            [
+                "Somente os arquivos produzidos pelo processamento",
+                "Os arquivos produzidos e também o arquivo de áudio",
+            ],
+        )
+        choice.SetSelection(0)
+        if choice.ShowModal() != wx.ID_OK:
+            choice.Destroy()
+            return
+        include_audio = choice.GetSelection() == 1
+        choice.Destroy()
+
+        consequence = (
+            "O áudio e todos os dados processados serão excluídos permanentemente."
+            if include_audio
+            else "A transcrição e os dados de prática serão excluídos. O áudio será mantido."
+        )
+        confirmation = wx.MessageDialog(
+            self,
+            f"{consequence}\n\nDeseja continuar?",
+            "Confirmar exclusão",
+            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+        )
+        confirmed = confirmation.ShowModal() == wx.ID_YES
+        confirmation.Destroy()
+        if not confirmed:
+            return
+        try:
+            deleted = delete_recording_data(recording, include_audio=include_audio)
+        except OSError as error:
+            wx.MessageBox(
+                f"Não foi possível excluir os dados.\n\n{error}",
+                "Erro na exclusão",
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        if include_audio:
+            self.selected_recording = None
+        self.processing_logs.pop(recording, None)
+        self.refresh_recordings()
+        if not deleted:
+            wx.MessageBox(
+                "Nenhum arquivo produzido pelo processamento foi encontrado.",
+                "Excluir dados da gravação",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
 
     def _start_processing(
         self, recording: Path, transcript_path: Path | None = None

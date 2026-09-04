@@ -11,7 +11,13 @@ from shadow_practice.infrastructure.forced_alignment import (
     align_transcript_file,
     parse_timestamped_transcript,
 )
-from shadow_practice.presentation.wx.launcher import ShadowPracticeFrame, is_processed_recording
+from shadow_practice.presentation.wx.launcher import (
+    ShadowPracticeFrame,
+    audio_file_details,
+    delete_recording_data,
+    is_processed_recording,
+    processing_artifacts,
+)
 
 
 class PublicAppTests(unittest.TestCase):
@@ -51,6 +57,36 @@ class PublicAppTests(unittest.TestCase):
             self.assertTrue(is_processed_recording(audio))
             words.write_text("not json", encoding="utf-8")
             self.assertFalse(is_processed_recording(audio))
+
+    def test_audio_details_include_duration_and_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            import numpy as np
+            import soundfile as sf
+
+            audio = Path(directory) / "sample.wav"
+            sf.write(audio, np.zeros(32_000, dtype=np.float32), 16_000)
+            duration, size = audio_file_details(audio)
+            self.assertEqual(duration, "0:02")
+            self.assertTrue(size.endswith(("KiB", "MiB")))
+
+    def test_delete_recording_data_can_preserve_or_remove_audio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            words = audio.with_suffix(".words.json")
+            speaks = audio.with_suffix(".speaks.json")
+            unrelated = audio.with_suffix(".txt")
+            for path in (audio, words, speaks, unrelated):
+                path.touch()
+
+            self.assertEqual(processing_artifacts(audio), [words, speaks])
+            self.assertEqual(delete_recording_data(audio), [words, speaks])
+            self.assertTrue(audio.exists())
+            self.assertTrue(unrelated.exists())
+
+            words.touch()
+            self.assertEqual(delete_recording_data(audio, include_audio=True), [words, audio])
+            self.assertFalse(audio.exists())
+            self.assertTrue(unrelated.exists())
 
     def test_processing_output_updates_structured_progress(self):
         frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)

@@ -42,7 +42,10 @@ python shadow_practice.py
 
 Recordings are written to `recordings/` by default. Select a recording, process it,
 then open it for practice. Existing `.words.json` and `.speaks.json` files remain
-compatible; their formats are described in [schemas](docs/schemas.md).
+compatible; their formats are described in [schemas](docs/schemas.md). The recording
+list shows audio duration and size. Its delete action can remove only generated
+processing artifacts for a clean reprocessing run, or remove those artifacts together
+with the source audio after confirmation.
 
 When processing, choose either full audio transcription or import a text transcript
 for forced alignment. Enable the latter with
