@@ -48,7 +48,9 @@ When processing, choose either full audio transcription or import a text transcr
 for forced alignment. Enable the latter with
 `python -m pip install -e '.[alignment]'`. Long imported transcripts must contain
 timestamps (for example `Speaker Name 00:01:23 spoken text`) so they can be divided
-into the aligner's five-minute input windows.
+into the aligner's five-minute input windows. Gemini exports with a timestamp on its
+own line followed by `Speaker Name: spoken text` lines are normalized automatically;
+the selected source file is never modified.
 
 ## Optional local Qwen TTS
 

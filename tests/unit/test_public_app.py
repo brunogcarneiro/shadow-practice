@@ -111,6 +111,23 @@ class PublicAppTests(unittest.TestCase):
             ],
         )
 
+    def test_gemini_transcript_sections_are_normalized_without_speaker_labels(self):
+        blocks = parse_timestamped_transcript(
+            "Meeting notes\n00:00:46\n\nJackie Shiu: Hello there.\n"
+            "Ahmed ElSallamy: Hi everyone.\n\n00:04:13\nAriel Hellwitz: Welcome back."
+        )
+        self.assertEqual(
+            [(block.start, block.text) for block in blocks],
+            [
+                (46, "Hello there. Hi everyone."),
+                (253, "Welcome back."),
+            ],
+        )
+        self.assertEqual(
+            [(turn.speaker, turn.text) for turn in blocks[0].turns],
+            [("Jackie Shiu", "Hello there."), ("Ahmed ElSallamy", "Hi everyone.")],
+        )
+
     def test_forced_alignment_writes_compatible_words_file(self):
         aligned_item = types.SimpleNamespace(text="Hello", start_time=0.2, end_time=0.7)
         aligner = Mock()

@@ -10,6 +10,13 @@ from pathlib import Path
 
 ProgressCallback = Callable[[int, int, dict], None]
 TIMESTAMP = re.compile(r"(?P<time>(?:\d{1,2}:)?\d{1,2}:\d{2})")
+SPEAKER_LINE = re.compile(r"^(?P<speaker>[^:\n]{1,120}):\s*(?P<text>.+)$")
+
+
+@dataclass(frozen=True)
+class TranscriptTurn:
+    speaker: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -17,6 +24,7 @@ class TranscriptBlock:
     start: float
     speaker: str
     text: str
+    turns: tuple[TranscriptTurn, ...] = ()
 
 
 def _seconds(value: str) -> float:
@@ -27,7 +35,7 @@ def _seconds(value: str) -> float:
 
 
 def parse_timestamped_transcript(text: str) -> list[TranscriptBlock]:
-    """Parse common Meet exports such as ``Speaker 00:01:02 text``."""
+    """Normalize timestamped Meet/Gemini exports into alignment blocks."""
     blocks: list[TranscriptBlock] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -35,10 +43,26 @@ def parse_timestamped_transcript(text: str) -> list[TranscriptBlock]:
         if not line or match is None:
             if blocks and line:
                 previous = blocks[-1]
+                speaker_match = SPEAKER_LINE.match(line)
+                if speaker_match:
+                    speaker = speaker_match.group("speaker").strip()
+                    content = speaker_match.group("text").strip()
+                    turns = (*previous.turns, TranscriptTurn(speaker, content))
+                elif previous.turns:
+                    last = previous.turns[-1]
+                    content = line
+                    turns = (
+                        *previous.turns[:-1],
+                        TranscriptTurn(last.speaker, f"{last.text} {content}"),
+                    )
+                else:
+                    content = line
+                    turns = (TranscriptTurn(previous.speaker, content),)
                 blocks[-1] = TranscriptBlock(
                     previous.start,
-                    previous.speaker,
-                    " ".join(part for part in (previous.text, line) if part),
+                    turns[0].speaker,
+                    " ".join(part for part in (previous.text, content) if part),
+                    turns,
                 )
             continue
         before = line[: match.start()].strip(" -\t")
@@ -49,8 +73,28 @@ def parse_timestamped_transcript(text: str) -> list[TranscriptBlock]:
             speaker, content = (part.strip() for part in after.split(":", 1))
         else:
             speaker, content = "SPEAKER_00", after
-        blocks.append(TranscriptBlock(_seconds(match.group("time")), speaker, content))
+        turns = (TranscriptTurn(speaker, content),) if content else ()
+        blocks.append(
+            TranscriptBlock(_seconds(match.group("time")), speaker, content, turns)
+        )
     return [block for block in blocks if block.text]
+
+
+def _speaker_for_item(index: int, item_count: int, block: TranscriptBlock) -> str:
+    """Map sequential aligned units back to their normalized transcript turn."""
+    if not block.turns:
+        return block.speaker
+    unit_counts = [
+        max(1, len(re.findall(r"\w+(?:['’]\w+)*", turn.text)))
+        for turn in block.turns
+    ]
+    expected_position = (index + 0.5) * sum(unit_counts) / max(1, item_count)
+    boundary = 0
+    for turn, unit_count in zip(block.turns, unit_counts):
+        boundary += unit_count
+        if expected_position < boundary:
+            return turn.speaker
+    return block.turns[-1].speaker
 
 
 def align_transcript_file(
@@ -104,13 +148,13 @@ def align_transcript_file(
         result = aligner.align(
             audio=(clip, sample_rate), text=block.text, language="English"
         )[0]
-        for item in result:
+        for item_index, item in enumerate(result):
             words.append(
                 {
                     "word": item.text,
                     "start": round(block.start + item.start_time, 3),
                     "end": round(block.start + item.end_time, 3),
-                    "speaker": block.speaker,
+                    "speaker": _speaker_for_item(item_index, len(result), block),
                 }
             )
         report(
