@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import gc
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +15,7 @@ import soundfile as sf
 
 SAMPLE_RATE = 44100
 StatusCallback = Callable[[str], None]
+LOGGER = logging.getLogger(__name__)
 
 
 class RecordingController:
@@ -120,6 +122,7 @@ class RecordingController:
                     while self.is_recording:
                         sd.sleep(200)
         except Exception as error:
+            LOGGER.exception("Audio recording failed")
             status_callback(f"Erro na gravação: {error}")
         finally:
             with self._lock:

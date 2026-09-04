@@ -1,12 +1,17 @@
 import json
+import logging
 import os
+import sys
 import tempfile
+import threading
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from shadow_practice.config import get_settings
+from shadow_practice.infrastructure.application_logging import configure_application_logging
 from shadow_practice.infrastructure.forced_alignment import (
     align_transcript_file,
     parse_timestamped_transcript,
@@ -26,14 +31,44 @@ class PublicAppTests(unittest.TestCase):
             os.environ,
             {
                 "SHADOW_PRACTICE_RECORDINGS_DIR": "/tmp/shadow-test",
+                "SHADOW_PRACTICE_LOG_DIR": "/tmp/shadow-logs",
                 "SHADOW_PRACTICE_AUDIO_DEVICE": "Test Device",
                 "SHADOW_PRACTICE_DEBUG": "true",
             },
         ):
             settings = get_settings()
         self.assertEqual(settings.recordings_dir, Path("/tmp/shadow-test"))
+        self.assertEqual(settings.log_dir, Path("/tmp/shadow-logs"))
         self.assertEqual(settings.audio_device, "Test Device")
         self.assertTrue(settings.debug)
+
+    def test_each_application_run_gets_a_timestamped_log_file(self):
+        root_logger = logging.getLogger()
+        previous_handlers = set(root_logger.handlers)
+        previous_hook = sys.excepthook
+        previous_thread_hook = threading.excepthook
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                log_path = configure_application_logging(
+                    Path(directory),
+                    started_at=datetime(2026, 9, 4, 12, 30, 45, 123456, tzinfo=timezone.utc),
+                )
+                logging.getLogger("shadow_practice.test").error("diagnostic test error")
+                for handler in root_logger.handlers:
+                    handler.flush()
+                self.assertEqual(
+                    log_path.name, "shadow-practice-20260904-123045-123456.log"
+                )
+                self.assertIn(
+                    "diagnostic test error", log_path.read_text(encoding="utf-8")
+                )
+        finally:
+            for handler in list(root_logger.handlers):
+                if handler not in previous_handlers:
+                    root_logger.removeHandler(handler)
+                    handler.close()
+            sys.excepthook = previous_hook
+            threading.excepthook = previous_thread_hook
 
     def test_configuration_loads_dotenv(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -32,6 +32,10 @@ The application loads `.env` automatically; variables already exported by the sh
 take precedence. Set `HUGGINGFACE_TOKEN` to a token that can access the gated pyannote
 diarization model. See [macOS setup](docs/macos-setup.md).
 
+Each application start creates a timestamped diagnostic log under `logs/`. Override
+the location with `SHADOW_PRACTICE_LOG_DIR`. Logs may contain local filenames and
+error details, so they are excluded from Git and should be shared carefully.
+
 ## Quick start
 
 ```bash

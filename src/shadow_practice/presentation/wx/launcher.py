@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -17,6 +18,8 @@ from ...config import get_settings
 from ...infrastructure.recording import RecordingController
 from .main_frame import TranscriptPlayer
 from .processing_details import ProcessingDetailsFrame
+
+LOGGER = logging.getLogger(__name__)
 
 
 def is_processed_recording(audio_path: Path) -> bool:
@@ -473,6 +476,7 @@ class ShadowPracticeFrame(wx.Frame):
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
+            LOGGER.error("Processing output for %s: %s", recording.name, line)
             event = {
                 "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "stage": "system",
@@ -481,6 +485,13 @@ class ShadowPracticeFrame(wx.Frame):
             }
         if not isinstance(event, dict):
             return
+        if event.get("stage") == "error":
+            LOGGER.error(
+                "Processing failed for %s: %s; data=%s",
+                recording.name,
+                event.get("description", "Unknown processing error"),
+                event.get("data", {}),
+            )
         self.processing_logs.setdefault(recording, []).append(event)
         if "percent" in event:
             self._set_processing_progress(
@@ -549,6 +560,7 @@ class ShadowPracticeFrame(wx.Frame):
             details.refresh()
         self.processing_cancelled.discard(recording)
         if error and not cancelled:
+            LOGGER.error("Processing process failed for %s: %s", recording.name, error)
             wx.MessageBox(
                 f"Não foi possível processar {recording.name}.\n\n{error}",
                 "Erro no processamento",
@@ -591,6 +603,9 @@ class ShadowPracticeFrame(wx.Frame):
 
 
 def main() -> None:
+    from ...infrastructure.application_logging import configure_application_logging
+
+    configure_application_logging()
     app = wx.App(False)
     frame = ShadowPracticeFrame()
     frame.Show()

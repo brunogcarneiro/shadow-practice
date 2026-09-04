@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Settings:
     recordings_dir: Path
+    log_dir: Path
     audio_device: str
     huggingface_token: str | None
     ollama_url: str
@@ -31,6 +32,7 @@ def get_settings() -> Settings:
     load_dotenv(override=False)
     return Settings(
         recordings_dir=Path(os.getenv("SHADOW_PRACTICE_RECORDINGS_DIR", "recordings")).expanduser(),
+        log_dir=Path(os.getenv("SHADOW_PRACTICE_LOG_DIR", "logs")).expanduser(),
         audio_device=os.getenv("SHADOW_PRACTICE_AUDIO_DEVICE", "Aggregate Device"),
         huggingface_token=os.getenv("HUGGINGFACE_TOKEN"),
         ollama_url=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate"),

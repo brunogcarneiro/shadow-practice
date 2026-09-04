@@ -1,6 +1,7 @@
 # Private user data
 recordings/*
 !recordings/.gitkeep
+logs/
 *.wav
 *.words.json
 *.speaks.json

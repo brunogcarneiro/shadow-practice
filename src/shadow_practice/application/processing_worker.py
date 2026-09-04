@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -83,7 +84,12 @@ def main() -> None:
             args.transcript.resolve() if args.transcript is not None else None,
         )
     except Exception as error:
-        emit(0, "error", {"type": type(error).__name__}, str(error))
+        emit(
+            0,
+            "error",
+            {"type": type(error).__name__, "traceback": traceback.format_exc()},
+            str(error),
+        )
         raise SystemExit(1) from error
 
 
