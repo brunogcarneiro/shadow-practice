@@ -97,6 +97,7 @@ class ShadowPracticeFrame(wx.Frame):
         self.processing_recordings: set[Path] = set()
         self.processing_progress: dict[Path, tuple[int, str]] = {}
         self.processing_logs: dict[Path, list[dict]] = {}
+        self.processing_errors: dict[Path, str] = {}
         self.processing_jobs: dict[Path, subprocess.Popen] = {}
         self.processing_cancelled: set[Path] = set()
         self.processing_detail_frames: dict[Path, ProcessingDetailsFrame] = {}
@@ -415,6 +416,7 @@ class ShadowPracticeFrame(wx.Frame):
         mode = "alinhamento forçado" if transcript_path is not None else "transcrição"
         self.processing_progress[recording] = (1, f"Preparando {mode}…")
         self.processing_logs[recording] = []
+        self.processing_errors.pop(recording, None)
         self.processing_cancelled.discard(recording)
         self.refresh_recordings()
         threading.Thread(
@@ -486,6 +488,9 @@ class ShadowPracticeFrame(wx.Frame):
         if not isinstance(event, dict):
             return
         if event.get("stage") == "error":
+            self.processing_errors[recording] = str(
+                event.get("description", "Unknown processing error")
+            )
             LOGGER.error(
                 "Processing failed for %s: %s; data=%s",
                 recording.name,
@@ -551,6 +556,7 @@ class ShadowPracticeFrame(wx.Frame):
     def _finish_processing(
         self, recording: Path, error: str | None, cancelled: bool = False
     ) -> None:
+        detailed_error = self.processing_errors.pop(recording, None)
         self.processing_recordings.discard(recording)
         self.processing_progress.pop(recording, None)
         self.processing_jobs.pop(recording, None)
@@ -559,10 +565,13 @@ class ShadowPracticeFrame(wx.Frame):
         if details is not None and not details.IsBeingDeleted():
             details.refresh()
         self.processing_cancelled.discard(recording)
-        if error and not cancelled:
-            LOGGER.error("Processing process failed for %s: %s", recording.name, error)
+        effective_error = detailed_error or error
+        if effective_error and not cancelled:
+            LOGGER.error(
+                "Processing process failed for %s: %s", recording.name, effective_error
+            )
             wx.MessageBox(
-                f"Não foi possível processar {recording.name}.\n\n{error}",
+                f"Não foi possível processar {recording.name}.\n\n{effective_error}",
                 "Erro no processamento",
                 wx.OK | wx.ICON_ERROR,
                 self,

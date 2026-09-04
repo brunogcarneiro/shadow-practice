@@ -130,6 +130,7 @@ class PublicAppTests(unittest.TestCase):
         frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)
         recording = Path("synthetic.wav")
         frame.processing_logs = {recording: []}
+        frame.processing_errors = {}
         frame.processing_progress = {}
         frame.processing_gauges = {}
         frame.processing_labels = {}
@@ -148,6 +149,30 @@ class PublicAppTests(unittest.TestCase):
         )
         self.assertEqual(frame.processing_progress[recording], (42, "Transcrevendo áudio…"))
         self.assertEqual(frame.processing_logs[recording][0]["stage"], "transcription")
+
+    def test_processing_error_preserves_the_worker_message(self):
+        frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)
+        recording = Path("synthetic.wav")
+        frame.processing_logs = {recording: []}
+        frame.processing_errors = {}
+        frame.processing_progress = {}
+        frame.processing_gauges = {}
+        frame.processing_labels = {}
+        frame.processing_detail_frames = {}
+        frame._handle_processing_output(
+            recording,
+            json.dumps(
+                {
+                    "stage": "error",
+                    "description": "Forced alignment model could not be loaded.",
+                    "data": {"type": "RuntimeError"},
+                }
+            ),
+        )
+        self.assertEqual(
+            frame.processing_errors[recording],
+            "Forced alignment model could not be loaded.",
+        )
 
     def test_interrupt_terminates_the_subprocess(self):
         frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)
