@@ -7,7 +7,7 @@ import tempfile
 import threading
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,6 +15,7 @@ from shadow_practice.config import get_settings
 from shadow_practice.infrastructure.application_logging import configure_application_logging
 from shadow_practice.infrastructure.forced_alignment import (
     align_transcript_file,
+    infer_timeline_offset,
     parse_timestamped_transcript,
 )
 from shadow_practice.presentation.wx.launcher import (
@@ -238,6 +239,14 @@ class PublicAppTests(unittest.TestCase):
             [(turn.speaker, turn.text) for turn in blocks[0].turns],
             [("Jackie Shiu", "Hello there."), ("Ahmed ElSallamy", "Hi everyone.")],
         )
+
+    def test_meeting_and_recording_filenames_produce_timeline_offset(self):
+        offset = infer_timeline_offset(
+            Path("2026-09-03_12-02-23.wav"),
+            Path("OHS - 2026_09_03 17_00 CEST - Notes by Gemini.txt"),
+            local_utc_offset=timezone(timedelta(hours=-3)).utcoffset(None),
+        )
+        self.assertEqual(offset, 143)
 
     def test_forced_alignment_writes_compatible_words_file(self):
         aligned_item = types.SimpleNamespace(text="Hello", start_time=0.2, end_time=0.7)

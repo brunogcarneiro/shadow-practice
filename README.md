@@ -201,7 +201,11 @@ Another Speaker: another utterance
 
 Gemini files are normalized automatically in memory: speaker labels are removed from
 the text passed to the aligner and then restored on the aligned words. The imported
-source file is never modified.
+source file is never modified. When the audio filename contains its recording time
+and the Gemini filename contains the scheduled meeting time and timezone (for example
+`2026_09_03 17_00 CEST`), the app also compensates for a recording that started after
+the meeting. Transcript blocks entirely outside the available audio are skipped and
+reported in the processing details.
 
 ## Reprocessing or deleting a recording
 

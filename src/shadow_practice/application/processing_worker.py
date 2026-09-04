@@ -46,6 +46,13 @@ def process(audio_path: Path, transcript_path: Path | None = None) -> None:
                 description = "Carregando o modelo de alinhamento forçado…"
             elif phase == "model-loaded":
                 description = "Modelo carregado; iniciando o alinhamento ao áudio."
+            elif phase == "timeline-normalized":
+                offset = float(data.get("timeline_offset_seconds", 0))
+                skipped = int(data.get("skipped_out_of_range_blocks", 0))
+                description = (
+                    f"Linha do tempo ajustada em {offset:.1f}s; "
+                    f"{skipped} bloco(s) fora da gravação ignorado(s)."
+                )
             else:
                 description = f"Bloco {completed} de {total} alinhado ao áudio."
             emit(

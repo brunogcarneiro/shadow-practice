@@ -6,11 +6,29 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ProgressCallback = Callable[[int, int, dict], None]
 TIMESTAMP = re.compile(r"(?P<time>(?:\d{1,2}:)?\d{1,2}:\d{2})")
 SPEAKER_LINE = re.compile(r"^(?P<speaker>[^:\n]{1,120}):\s*(?P<text>.+)$")
+AUDIO_START = re.compile(
+    r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})_"
+    r"(?P<hour>\d{2})-(?P<minute>\d{2})-(?P<second>\d{2})"
+)
+TRANSCRIPT_START = re.compile(
+    r"(?P<year>\d{4})[_-](?P<month>\d{2})[_-](?P<day>\d{2})[ _-]+"
+    r"(?P<hour>\d{2})[_-](?P<minute>\d{2})(?:[_-](?P<second>\d{2}))?"
+    r"[ _-]*(?P<zone>CEST|CET|UTC|GMT|BRT)\b",
+    re.IGNORECASE,
+)
+TIMEZONE_OFFSETS = {
+    "CEST": timedelta(hours=2),
+    "CET": timedelta(hours=1),
+    "UTC": timedelta(0),
+    "GMT": timedelta(0),
+    "BRT": timedelta(hours=-3),
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +98,50 @@ def parse_timestamped_transcript(text: str) -> list[TranscriptBlock]:
     return [block for block in blocks if block.text]
 
 
+def infer_timeline_offset(
+    audio_path: Path,
+    transcript_path: Path,
+    *,
+    local_utc_offset: timedelta | None = None,
+) -> float | None:
+    """Infer seconds between scheduled meeting time and recording start."""
+    audio_match = AUDIO_START.search(audio_path.stem)
+    transcript_match = TRANSCRIPT_START.search(transcript_path.stem)
+    if audio_match is None or transcript_match is None:
+        return None
+
+    if local_utc_offset is None:
+        local_utc_offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+    audio_values = {key: int(value) for key, value in audio_match.groupdict().items()}
+    transcript_values = {
+        key: int(value or 0)
+        for key, value in transcript_match.groupdict().items()
+        if key != "zone"
+    }
+    audio_started = datetime(**audio_values, tzinfo=timezone(local_utc_offset))
+    transcript_started = datetime(
+        **transcript_values,
+        tzinfo=timezone(TIMEZONE_OFFSETS[transcript_match.group("zone").upper()]),
+    )
+    return (audio_started - transcript_started).total_seconds()
+
+
+def _fit_blocks_to_audio_timeline(
+    blocks: list[TranscriptBlock], duration: float, offset: float
+) -> tuple[list[TranscriptBlock], int]:
+    adjusted: list[TranscriptBlock] = []
+    skipped = 0
+    for block in blocks:
+        start = block.start - offset
+        if start < 0 or start >= duration:
+            skipped += 1
+            continue
+        adjusted.append(
+            TranscriptBlock(start, block.speaker, block.text, block.turns)
+        )
+    return adjusted, skipped
+
+
 def _speaker_for_item(index: int, item_count: int, block: TranscriptBlock) -> str:
     """Map sequential aligned units back to their normalized transcript turn."""
     if not block.turns:
@@ -127,6 +189,25 @@ def align_transcript_file(
                 "Transcripts for audio longer than five minutes must contain timestamps."
             )
         blocks = [TranscriptBlock(0.0, "SPEAKER_00", " ".join(transcript.split()))]
+    else:
+        timeline_offset = infer_timeline_offset(audio_path, transcript_path) or 0.0
+        blocks, skipped_blocks = _fit_blocks_to_audio_timeline(
+            blocks, duration, timeline_offset
+        )
+        report(
+            0,
+            len(blocks),
+            {
+                "phase": "timeline-normalized",
+                "timeline_offset_seconds": timeline_offset,
+                "skipped_out_of_range_blocks": skipped_blocks,
+                "audio_duration_seconds": round(duration, 3),
+            },
+        )
+        if not blocks:
+            raise ValueError(
+                "No timestamped transcript blocks overlap the recorded audio."
+            )
 
     report(0, len(blocks), {"phase": "model-loading"})
     aligner = Qwen3ForcedAligner.from_pretrained(
@@ -139,7 +220,11 @@ def align_transcript_file(
     total = len(blocks)
     for index, block in enumerate(blocks):
         end = blocks[index + 1].start if index + 1 < total else duration
-        end = min(duration, max(block.start + 0.1, end))
+        end = min(duration, end)
+        if end <= block.start:
+            raise ValueError(
+                f"Transcript block at {block.start:.1f}s has no overlapping audio."
+            )
         if end - block.start > 300:
             raise ValueError(
                 f"Transcript block at {block.start:.1f}s exceeds the five-minute limit."
