@@ -11,7 +11,12 @@ from shadow_practice.domain import (
     split_rewrite_paragraphs,
     validate_groups,
 )
-from shadow_practice.domain.playback import PlaybackState, advance, resolve_seek
+from shadow_practice.domain.playback import (
+    PlaybackState,
+    advance,
+    ensure_playable_range,
+    resolve_seek,
+)
 from shadow_practice.domain.speaks import build_speaks_from_groups
 from shadow_practice.domain.waveform import sample_peaks, time_from_x, x_from_time
 from shadow_practice.infrastructure.persistence import load_json, save_json_atomic
@@ -78,6 +83,9 @@ class DomainTests(unittest.TestCase):
         looping = PlaybackState(0, True, 10, (2, 5))
         self.assertEqual(advance(looping, 11, 20).current_time, 2)
         self.assertEqual(resolve_seek(4, 10, 20, 8), 8)
+        self.assertEqual(ensure_playable_range(5, 5, 20), (4.5, 5.5))
+        self.assertEqual(ensure_playable_range(20, 20, 20), (19.0, 20.0))
+        self.assertEqual(ensure_playable_range(3, 4, 20), (3.0, 4.0))
 
     def test_atomic_json_repository_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -26,3 +26,21 @@ def resolve_seek(current_time: float, delta: float, audio_length: float, end_tim
     if end_time is not None:
         target = min(target, float(end_time))
     return target
+
+
+def ensure_playable_range(
+    start_time: float,
+    end_time: float,
+    audio_length: float,
+    minimum_duration: float = 1.0,
+) -> tuple[float, float]:
+    """Return a non-empty range, expanding point timestamps when necessary."""
+    length = max(0.0, float(audio_length))
+    start = max(0.0, min(float(start_time), length))
+    end = max(0.0, min(float(end_time), length))
+    if end > start or length <= 0:
+        return start, end
+
+    window = min(max(0.001, float(minimum_duration)), length)
+    expanded_start = max(0.0, min(start - window / 2, length - window))
+    return expanded_start, expanded_start + window

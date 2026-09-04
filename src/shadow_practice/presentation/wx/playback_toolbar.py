@@ -1,6 +1,6 @@
 import time
 
-from ...domain.playback import resolve_seek
+from ...domain.playback import ensure_playable_range, resolve_seek
 from ...domain.transcript import format_audio_time as domain_format_audio_time
 
 
@@ -108,6 +108,9 @@ class PlaybackBehavior:
 
         pos = self.clamp_time(pos)
         end_pos = self.clamp_time(end_pos) if end_pos is not None else None
+        if end_pos is not None:
+            pos, end_pos = ensure_playable_range(pos, end_pos, self.audio_length)
+            self.current_time = pos
         self.play_obj = self.audio_playback.play(pos, end_pos)
         self.is_playing = True
         self.start_time = time.time() - pos

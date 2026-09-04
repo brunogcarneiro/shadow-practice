@@ -50,6 +50,15 @@ class AudioPlaybackServiceTests(unittest.TestCase):
         service.stop()
         self.assertFalse(service.is_playing())
 
+    def test_empty_range_never_reaches_native_playback(self):
+        calls = []
+        service = AudioPlaybackService(FakeSegment(), lambda *args: calls.append(args))
+
+        with self.assertRaisesRegex(ValueError, "empty audio range"):
+            service.play(2.0, 2.0)
+
+        self.assertEqual(calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

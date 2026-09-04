@@ -23,7 +23,11 @@ class AudioPlaybackService:
         self.stop()
         start_ms = max(0, int(float(start_time) * 1000))
         end_ms = None if end_time is None else max(start_ms, int(float(end_time) * 1000))
+        if end_ms is not None and end_ms <= start_ms:
+            raise ValueError("Cannot play an empty audio range.")
         segment = self.audio_segment[start_ms:end_ms]
+        if not segment.raw_data:
+            raise ValueError("Cannot play an empty audio buffer.")
         self.play_obj = self.play_buffer(
             segment.raw_data,
             segment.channels,
