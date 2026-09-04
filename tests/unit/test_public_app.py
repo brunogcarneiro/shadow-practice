@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import runpy
 import sys
 import tempfile
 import threading
@@ -26,6 +27,17 @@ from shadow_practice.presentation.wx.launcher import (
 
 
 class PublicAppTests(unittest.TestCase):
+    def test_compatibility_launcher_prioritizes_the_src_package(self):
+        project_root = Path(__file__).resolve().parents[2]
+        source_root = str(project_root / "src")
+        previous_path = sys.path.copy()
+        try:
+            sys.path[:] = [str(project_root), source_root, *previous_path]
+            runpy.run_path(str(project_root / "shadow_practice.py"))
+            self.assertEqual(sys.path[0], source_root)
+        finally:
+            sys.path[:] = previous_path
+
     def test_configuration_comes_from_environment(self):
         with patch.dict(
             os.environ,
