@@ -97,36 +97,85 @@ def _speaker_for_item(index: int, item_count: int, block: TranscriptBlock) -> st
     return block.turns[-1].speaker
 
 
-def _safe_alignment_times(result, duration: float) -> list[tuple[float, float]]:
-    """Use model times when valid, or evenly distribute units in the block."""
+def _repair_alignment_times(
+    result, duration: float
+) -> tuple[list[tuple[float, float]], list[str]]:
+    """Preserve valid model anchors and interpolate only invalid word spans."""
     if not result:
-        return []
-    previous_end = 0.0
-    valid = True
-    for item in result:
+        return [], []
+
+    minimum_estimated_duration = 0.001
+    anchors: dict[int, tuple[float, float]] = {}
+    previous_anchor_index = -1
+    previous_anchor_end = 0.0
+    for index, item in enumerate(result):
         start = float(item.start_time)
         end = float(item.end_time)
+        estimated_before = index - previous_anchor_index - 1
+        required_gap = minimum_estimated_duration * estimated_before
         if (
-            not math.isfinite(start)
-            or not math.isfinite(end)
-            or start < previous_end
-            or end <= start
-            or end > duration + 0.001
+            math.isfinite(start)
+            and math.isfinite(end)
+            and start >= previous_anchor_end + required_gap
+            and end > start
+            and end <= duration + 0.001
         ):
-            valid = False
-            break
-        previous_end = end
-    if valid:
-        return [(float(item.start_time), float(item.end_time)) for item in result]
+            anchors[index] = (max(0.0, start), min(duration, end))
+            previous_anchor_index = index
+            previous_anchor_end = end
 
-    weights = [max(1, len(str(item.text).strip())) for item in result]
-    total_weight = sum(weights)
-    cursor = 0.0
-    times = []
-    for weight in weights:
-        start = cursor
-        cursor += duration * weight / total_weight
-        times.append((start, cursor))
+    while anchors:
+        last_index = next(reversed(anchors))
+        estimated_after = len(result) - last_index - 1
+        if duration - anchors[last_index][1] >= (
+            minimum_estimated_duration * estimated_after
+        ):
+            break
+        del anchors[last_index]
+
+    times: list[tuple[float, float] | None] = [None] * len(result)
+    methods = ["interpolated"] * len(result)
+    for index, span in anchors.items():
+        times[index] = span
+        methods[index] = "model"
+
+    anchor_indexes = [-1, *anchors, len(result)]
+    for left_index, right_index in zip(anchor_indexes, anchor_indexes[1:]):
+        run_indexes = list(range(left_index + 1, right_index))
+        if not run_indexes:
+            continue
+        left_boundary = anchors[left_index][1] if left_index >= 0 else 0.0
+        right_boundary = (
+            anchors[right_index][0] if right_index < len(result) else duration
+        )
+        available = right_boundary - left_boundary
+        minimum_total = minimum_estimated_duration * len(run_indexes)
+        if available < minimum_total:
+            raise RuntimeError("Audio interval is too short to timestamp every word.")
+        weights = [max(1, len(str(result[index].text).strip())) for index in run_indexes]
+        distributable = available - minimum_total
+        total_weight = sum(weights)
+        cursor = left_boundary
+        for position, (index, weight) in enumerate(zip(run_indexes, weights)):
+            end = (
+                right_boundary
+                if position == len(run_indexes) - 1
+                else cursor
+                + minimum_estimated_duration
+                + distributable * weight / total_weight
+            )
+            times[index] = (cursor, end)
+            cursor = end
+
+    repaired = [span for span in times if span is not None]
+    if len(repaired) != len(result):
+        raise RuntimeError("Could not assign timestamps to every aligned word.")
+    return repaired, methods
+
+
+def _safe_alignment_times(result, duration: float) -> list[tuple[float, float]]:
+    """Compatibility wrapper returning a timestamp for every word."""
+    times, _methods = _repair_alignment_times(result, duration)
     return times
 
 
@@ -206,20 +255,24 @@ def align_transcript_file(
         result = aligner.align(
             audio=(clip, sample_rate), text=block.text, language="English"
         )[0]
-        alignment_times = _safe_alignment_times(result, end - block.start)
-        used_fallback = any(
-            (start, finish) != (float(item.start_time), float(item.end_time))
-            for item, (start, finish) in zip(result, alignment_times)
+        alignment_times, alignment_methods = _repair_alignment_times(
+            result, end - block.start
         )
+        estimated_count = alignment_methods.count("interpolated")
         for item_index, (item, (start_time, end_time)) in enumerate(
             zip(result, alignment_times)
         ):
+            method = alignment_methods[item_index]
             words.append(
                 {
                     "word": item.text,
                     "start": round(block.start + start_time, 3),
                     "end": round(block.start + end_time, 3),
                     "speaker": _speaker_for_item(item_index, len(result), block),
+                    "alignment": {
+                        "method": method,
+                        "confidence": "high" if method == "model" else "low",
+                    },
                 }
             )
         report(
@@ -229,7 +282,9 @@ def align_transcript_file(
                 "speaker": block.speaker,
                 "start": block.start,
                 "end": end,
-                "fallback_timing": used_fallback,
+                "fallback_timing": estimated_count > 0,
+                "model_aligned_words": len(result) - estimated_count,
+                "interpolated_words": estimated_count,
             },
         )
 

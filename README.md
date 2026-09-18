@@ -230,6 +230,13 @@ and the Gemini filename contains the scheduled meeting time and timezone (for ex
 the meeting. Transcript blocks entirely outside the available audio are skipped and
 reported in the processing details.
 
+The local forced aligner preserves every valid timestamp returned by Qwen. If the
+model returns an invalid or zero-duration timestamp, only that consecutive run of
+words is interpolated between the nearest valid timestamps. Every word still receives
+the required `start` and `end` fields. The additional `alignment.method` field records
+whether its timing came from the model or interpolation, and the processing details
+report the number of words in each category.
+
 ## Reprocessing or deleting a recording
 
 Each row displays audio duration and size. Click **Excluir…** and choose either:

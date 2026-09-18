@@ -18,6 +18,7 @@ from shadow_practice.application.processing_worker import emit
 from shadow_practice.config import get_settings
 from shadow_practice.infrastructure.application_logging import configure_application_logging
 from shadow_practice.infrastructure.forced_alignment import (
+    _repair_alignment_times,
     _safe_alignment_times,
     align_transcript_file,
     infer_timeline_offset,
@@ -542,6 +543,24 @@ class PublicAppTests(unittest.TestCase):
         self.assertGreater(times[0][1], times[0][0])
         self.assertGreater(times[1][0], times[0][0])
 
+    def test_forced_alignment_repairs_only_invalid_words_between_model_anchors(self):
+        items = [
+            types.SimpleNamespace(text="First", start_time=0.2, end_time=0.7),
+            types.SimpleNamespace(text="bad", start_time=0.0, end_time=0.0),
+            types.SimpleNamespace(text="timing", start_time=0.0, end_time=0.0),
+            types.SimpleNamespace(text="Last", start_time=2.5, end_time=2.9),
+        ]
+
+        times, methods = _repair_alignment_times(items, 3.0)
+
+        self.assertEqual(times[0], (0.2, 0.7))
+        self.assertEqual(times[3], (2.5, 2.9))
+        self.assertEqual(methods, ["model", "interpolated", "interpolated", "model"])
+        self.assertEqual(times[1][0], 0.7)
+        self.assertEqual(times[2][1], 2.5)
+        self.assertGreater(times[1][1], times[1][0])
+        self.assertGreater(times[2][1], times[2][0])
+
     def test_forced_alignment_writes_compatible_words_file(self):
         aligned_item = types.SimpleNamespace(text="Hello", start_time=0.2, end_time=0.7)
         aligner = Mock()
@@ -567,7 +586,15 @@ class PublicAppTests(unittest.TestCase):
 
             self.assertEqual(
                 json.loads(output.read_text(encoding="utf-8")),
-                [{"word": "Hello", "start": 0.2, "end": 0.7, "speaker": "Bruno"}],
+                [
+                    {
+                        "word": "Hello",
+                        "start": 0.2,
+                        "end": 0.7,
+                        "speaker": "Bruno",
+                        "alignment": {"method": "model", "confidence": "high"},
+                    }
+                ],
             )
             aligner.align.assert_called_once()
 
