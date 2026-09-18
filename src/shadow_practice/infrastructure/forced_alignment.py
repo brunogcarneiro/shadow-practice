@@ -6,13 +6,12 @@ import json
 import math
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .transcript_formats import TranscriptBlock, parse_imported_transcript
+
 ProgressCallback = Callable[[int, int, dict], None]
-TIMESTAMP = re.compile(r"(?P<time>(?:\d{1,2}:)?\d{1,2}:\d{2})")
-SPEAKER_LINE = re.compile(r"^(?P<speaker>[^:\n]{1,120}):\s*(?P<text>.+)$")
 AUDIO_START = re.compile(
     r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})_"
     r"(?P<hour>\d{2})-(?P<minute>\d{2})-(?P<second>\d{2})"
@@ -32,71 +31,9 @@ TIMEZONE_OFFSETS = {
 }
 
 
-@dataclass(frozen=True)
-class TranscriptTurn:
-    speaker: str
-    text: str
-
-
-@dataclass(frozen=True)
-class TranscriptBlock:
-    start: float
-    speaker: str
-    text: str
-    turns: tuple[TranscriptTurn, ...] = ()
-
-
-def _seconds(value: str) -> float:
-    parts = [int(part) for part in value.split(":")]
-    if len(parts) == 2:
-        return parts[0] * 60 + parts[1]
-    return parts[0] * 3600 + parts[1] * 60 + parts[2]
-
-
 def parse_timestamped_transcript(text: str) -> list[TranscriptBlock]:
-    """Normalize timestamped Meet/Gemini exports into alignment blocks."""
-    blocks: list[TranscriptBlock] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        match = TIMESTAMP.search(line)
-        if not line or match is None:
-            if blocks and line:
-                previous = blocks[-1]
-                speaker_match = SPEAKER_LINE.match(line)
-                if speaker_match:
-                    speaker = speaker_match.group("speaker").strip()
-                    content = speaker_match.group("text").strip()
-                    turns = (*previous.turns, TranscriptTurn(speaker, content))
-                elif previous.turns:
-                    last = previous.turns[-1]
-                    content = line
-                    turns = (
-                        *previous.turns[:-1],
-                        TranscriptTurn(last.speaker, f"{last.text} {content}"),
-                    )
-                else:
-                    content = line
-                    turns = (TranscriptTurn(previous.speaker, content),)
-                blocks[-1] = TranscriptBlock(
-                    previous.start,
-                    turns[0].speaker,
-                    " ".join(part for part in (previous.text, content) if part),
-                    turns,
-                )
-            continue
-        before = line[: match.start()].strip(" -\t")
-        after = line[match.end() :].strip(" -:\t")
-        if before:
-            speaker, content = before.rstrip(":-"), after
-        elif ":" in after:
-            speaker, content = (part.strip() for part in after.split(":", 1))
-        else:
-            speaker, content = "SPEAKER_00", after
-        turns = (TranscriptTurn(speaker, content),) if content else ()
-        blocks.append(
-            TranscriptBlock(_seconds(match.group("time")), speaker, content, turns)
-        )
-    return [block for block in blocks if block.text]
+    """Compatibility wrapper for callers expecting normalized blocks only."""
+    return list(parse_imported_transcript(text).blocks)
 
 
 def infer_timeline_offset(
@@ -216,7 +153,8 @@ def align_transcript_file(
     if getattr(audio, "ndim", 1) > 1:
         audio = audio.mean(axis=1)
     duration = len(audio) / sample_rate
-    blocks = parse_timestamped_transcript(transcript)
+    parsed_transcript = parse_imported_transcript(transcript)
+    blocks = list(parsed_transcript.blocks)
     if not blocks:
         if duration > 300:
             raise ValueError(
@@ -236,6 +174,7 @@ def align_transcript_file(
                 "timeline_offset_seconds": timeline_offset,
                 "skipped_out_of_range_blocks": skipped_blocks,
                 "audio_duration_seconds": round(duration, 3),
+                "transcript_format": parsed_transcript.format_name,
             },
         )
         if not blocks:

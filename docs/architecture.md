@@ -5,6 +5,8 @@ The package follows a dependency-inward layout:
 - `domain`: transcript, playback, waveform, and speaking-session rules with no GUI.
 - `application`: controllers and sense-group/model task orchestration.
 - `infrastructure`: JSON persistence, audio adapters, recording, transcription, and TTS.
+- `infrastructure/transcript_formats`: isolated adapters for Gemini/Google Meet and
+  timestamped AI-course transcripts, normalized into shared transcript blocks.
 - `presentation/wx`: the launcher, practice window, and wxPython controls.
 
 `shadow_practice.cli:main` is the installed composition entry point. The root launcher

@@ -21,6 +21,7 @@ from shadow_practice.infrastructure.forced_alignment import (
     infer_timeline_offset,
     parse_timestamped_transcript,
 )
+from shadow_practice.infrastructure.transcript_formats import parse_imported_transcript
 from shadow_practice.presentation.wx.launcher import (
     ShadowPracticeFrame,
     audio_file_details,
@@ -264,6 +265,20 @@ class PublicAppTests(unittest.TestCase):
         self.assertEqual(
             [(turn.speaker, turn.text) for turn in blocks[0].turns],
             [("Jackie Shiu", "Hello there."), ("Ahmed ElSallamy", "Hi everyone.")],
+        )
+
+    def test_ai_course_transcript_uses_isolated_course_parser(self):
+        parsed = parse_imported_transcript(
+            "[00:00]\nIntroduction to AI.\n\nMore context.\n"
+            "[03:00]\nSymbolic reasoning begins here.\n"
+            "[06:00]\nMachine learning follows."
+        )
+
+        self.assertEqual(parsed.format_name, "ai-course")
+        self.assertEqual([block.start for block in parsed.blocks], [0, 180, 360])
+        self.assertEqual(parsed.blocks[0].text, "Introduction to AI. More context.")
+        self.assertEqual(
+            {block.speaker for block in parsed.blocks}, {"COURSE_INSTRUCTOR"}
         )
 
     def test_meeting_and_recording_filenames_produce_timeline_offset(self):

@@ -199,9 +199,23 @@ Speaker Name: spoken text
 Another Speaker: another utterance
 ```
 
+AI-course transcripts split into approximately three-minute blocks are also detected
+automatically:
+
+```text
+[00:00]
+Lecture text for the first block.
+
+[03:00]
+Lecture text for the next block.
+```
+
+The Gemini and AI-course formats use separate parser components. Course blocks are
+assigned the stable `COURSE_INSTRUCTOR` speaker because that source format does not
+contain speaker labels. The imported source file is never modified.
+
 Gemini files are normalized automatically in memory: speaker labels are removed from
-the text passed to the aligner and then restored on the aligned words. The imported
-source file is never modified. When the audio filename contains its recording time
+the text passed to the aligner and then restored on the aligned words. When the audio filename contains its recording time
 and the Gemini filename contains the scheduled meeting time and timezone (for example
 `2026_09_03 17_00 CEST`), the app also compensates for a recording that started after
 the meeting. Transcript blocks entirely outside the available audio are skipped and
