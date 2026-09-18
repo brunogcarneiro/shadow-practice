@@ -18,6 +18,7 @@ class Settings:
     ollama_url: str
     ollama_model: str
     openai_api_key: str | None
+    openai_transcriptions_url: str
     openai_responses_url: str
     openai_rewrite_model: str
     qwen_tts_service_url: str
@@ -38,6 +39,9 @@ def get_settings() -> Settings:
         ollama_url=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate"),
         ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
+        openai_transcriptions_url=os.getenv(
+            "OPENAI_TRANSCRIPTIONS_URL", "https://api.openai.com/v1/audio/transcriptions"
+        ),
         openai_responses_url=os.getenv("OPENAI_RESPONSES_URL", "https://api.openai.com/v1/responses"),
         openai_rewrite_model=os.getenv("OPENAI_REWRITE_MODEL", "gpt-5.4-mini"),
         qwen_tts_service_url=os.getenv("QWEN_TTS_SERVICE_URL", "http://127.0.0.1:8011"),

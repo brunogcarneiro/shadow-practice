@@ -353,6 +353,7 @@ class ShadowPracticeFrame(wx.Frame):
         choice.Destroy()
 
         transcript_path = None
+        transcription_model = "local"
         if selected_mode == 1:
             file_dialog = wx.FileDialog(
                 self,
@@ -365,8 +366,26 @@ class ShadowPracticeFrame(wx.Frame):
                 return
             transcript_path = Path(file_dialog.GetPath())
             file_dialog.Destroy()
+        else:
+            model_dialog = wx.SingleChoiceDialog(
+                self,
+                "Qual modelo deseja usar para transcrever o áudio?",
+                "Modelo de transcrição",
+                [
+                    "Local — Whisper large",
+                    "OpenAI API — whisper-1",
+                ],
+            )
+            model_dialog.SetSelection(0)
+            if model_dialog.ShowModal() != wx.ID_OK:
+                model_dialog.Destroy()
+                return
+            transcription_model = (
+                "whisper-1" if model_dialog.GetSelection() == 1 else "local"
+            )
+            model_dialog.Destroy()
 
-        self._start_processing(recording, transcript_path)
+        self._start_processing(recording, transcript_path, transcription_model)
 
     def on_delete_recording(self, event: wx.CommandEvent) -> None:
         recording = event.GetEventObject().recording_path
@@ -419,7 +438,10 @@ class ShadowPracticeFrame(wx.Frame):
             )
 
     def _start_processing(
-        self, recording: Path, transcript_path: Path | None = None
+        self,
+        recording: Path,
+        transcript_path: Path | None = None,
+        transcription_model: str = "local",
     ) -> None:
         self.processing_recordings.add(recording)
         mode = "alinhamento forçado" if transcript_path is not None else "transcrição"
@@ -430,13 +452,16 @@ class ShadowPracticeFrame(wx.Frame):
         self.refresh_recordings()
         threading.Thread(
             target=self._run_processing_subprocess,
-            args=(recording, transcript_path),
+            args=(recording, transcript_path, transcription_model),
             daemon=True,
             name=f"process-{recording.stem}",
         ).start()
 
     def _run_processing_subprocess(
-        self, recording: Path, transcript_path: Path | None = None
+        self,
+        recording: Path,
+        transcript_path: Path | None = None,
+        transcription_model: str = "local",
     ) -> None:
         source_root = Path(__file__).resolve().parents[3]
         environment = os.environ.copy()
@@ -453,6 +478,8 @@ class ShadowPracticeFrame(wx.Frame):
             ]
             if transcript_path is not None:
                 command.extend(("--transcript", str(transcript_path.resolve())))
+            else:
+                command.extend(("--transcription-model", transcription_model))
             process = subprocess.Popen(
                 command,
                 cwd=recording.resolve().parent,

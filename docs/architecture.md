@@ -5,6 +5,8 @@ The package follows a dependency-inward layout:
 - `domain`: transcript, playback, waveform, and speaking-session rules with no GUI.
 - `application`: controllers and sense-group/model task orchestration.
 - `infrastructure`: JSON persistence, audio adapters, recording, transcription, and TTS.
+- Local Whisper and OpenAI `whisper-1` are separate transcription adapters; both feed
+  timestamped words into the shared local speaker-diarization component.
 - `infrastructure/transcript_formats`: isolated adapters for Gemini/Google Meet and
   timestamped AI-course transcripts, normalized into shared transcript blocks.
 - `presentation/wx`: the launcher, practice window, and wxPython controls.

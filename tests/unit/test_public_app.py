@@ -21,6 +21,9 @@ from shadow_practice.infrastructure.forced_alignment import (
     infer_timeline_offset,
     parse_timestamped_transcript,
 )
+from shadow_practice.infrastructure.openai_transcription import (
+    transcribe_recording_openai,
+)
 from shadow_practice.infrastructure.transcript_formats import parse_imported_transcript
 from shadow_practice.presentation.wx.launcher import (
     ShadowPracticeFrame,
@@ -33,6 +36,76 @@ from shadow_practice.presentation.wx.launcher import (
 
 
 class PublicAppTests(unittest.TestCase):
+    def test_openai_whisper_transcription_keeps_word_timestamps(self):
+        class FakeAudio:
+            def set_channels(self, _channels):
+                return self
+
+            def set_frame_rate(self, _rate):
+                return self
+
+            def __len__(self):
+                return 1_000
+
+            def __getitem__(self, _key):
+                return self
+
+            def export(self, target, format):
+                self.export_format = format
+                target.write(b"flac")
+
+        response = Mock(ok=True)
+        response.json.return_value = {
+            "words": [{"word": " hello", "start": 0.2, "end": 0.7}]
+        }
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_transcriptions_url="https://openai.test/transcriptions",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            audio.touch()
+            with (
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.AudioSegment.from_file",
+                    return_value=FakeAudio(),
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.requests.post",
+                    return_value=response,
+                ) as post,
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.assign_speakers",
+                    side_effect=lambda _path, words, _report: [
+                        {**word, "speaker": "SPEAKER_00"} for word in words
+                    ],
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.validate_speaker_diarization"
+                ),
+            ):
+                output = transcribe_recording_openai(audio)
+
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                [
+                    {
+                        "word": "hello",
+                        "start": 0.2,
+                        "end": 0.7,
+                        "speaker": "SPEAKER_00",
+                    }
+                ],
+            )
+            request = post.call_args.kwargs
+            self.assertIn(("timestamp_granularities[]", "word"), request["data"])
+            self.assertEqual(request["headers"]["Authorization"], "Bearer test-key")
+
     def test_processing_events_serialize_numpy_scalars(self):
         import numpy as np
 

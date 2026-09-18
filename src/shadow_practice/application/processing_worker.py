@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..infrastructure.forced_alignment import align_transcript_file
+from ..infrastructure.openai_transcription import transcribe_recording_openai
 from ..infrastructure.transcription import transcribe_recording
 from .sense_groups import group_words_file
 
@@ -41,14 +42,30 @@ def emit(percent: int, stage: str, data: dict, description: str) -> None:
     print(json.dumps(event, ensure_ascii=False, default=_json_default), flush=True)
 
 
-def process(audio_path: Path, transcript_path: Path | None = None) -> None:
-    emit(1, "preparation", {"audio": audio_path.name}, "Processamento iniciado.")
+def process(
+    audio_path: Path,
+    transcript_path: Path | None = None,
+    transcription_model: str = "local",
+) -> None:
+    emit(
+        1,
+        "preparation",
+        {"audio": audio_path.name, "transcription_model": transcription_model},
+        "Processamento iniciado.",
+    )
 
     def transcription_progress(percent: int, message: str, data: dict | None = None) -> None:
         emit(percent, "transcription", data or {}, message)
 
     if transcript_path is None:
-        words_path = transcribe_recording(audio_path, progress_callback=transcription_progress)
+        if transcription_model == "whisper-1":
+            words_path = transcribe_recording_openai(
+                audio_path, progress_callback=transcription_progress
+            )
+        else:
+            words_path = transcribe_recording(
+                audio_path, progress_callback=transcription_progress
+            )
     else:
         emit(
             5,
@@ -101,11 +118,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("audio_path", type=Path)
     parser.add_argument("--transcript", type=Path)
+    parser.add_argument(
+        "--transcription-model", choices=("local", "whisper-1"), default="local"
+    )
     args = parser.parse_args()
     try:
         process(
             args.audio_path.resolve(),
             args.transcript.resolve() if args.transcript is not None else None,
+            args.transcription_model,
         )
     except Exception as error:
         emit(

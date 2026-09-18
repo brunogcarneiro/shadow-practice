@@ -123,7 +123,8 @@ take precedence.
 | `HUGGINGFACE_TOKEN` | empty | Required by normal speaker diarization |
 | `OLLAMA_URL` | `http://127.0.0.1:11434/api/generate` | Ollama generation endpoint |
 | `OLLAMA_MODEL` | `qwen2.5:7b-instruct` | Sense-group model |
-| `OPENAI_API_KEY` | empty | Optional professional rewrite feature |
+| `OPENAI_API_KEY` | empty | Required for `whisper-1`; also enables professional rewrite |
+| `OPENAI_TRANSCRIPTIONS_URL` | OpenAI Audio API | `whisper-1` transcription endpoint |
 | `OPENAI_RESPONSES_URL` | OpenAI Responses API | Rewrite endpoint |
 | `OPENAI_REWRITE_MODEL` | `gpt-5.4-mini` | Rewrite model |
 | `QWEN_TTS_SERVICE_URL` | `http://127.0.0.1:8011` | Optional local TTS service |
@@ -141,8 +142,9 @@ python -c "from qwen_asr import Qwen3ForcedAligner; print('alignment ready')"
 ollama list
 ```
 
-The first normal transcription downloads the configured Whisper and pyannote model
-weights. The first forced-alignment run downloads
+The first local transcription downloads the configured Whisper and pyannote model
+weights. The `whisper-1` option uploads audio chunks to OpenAI but still downloads and
+uses pyannote locally. The first forced-alignment run downloads
 `Qwen/Qwen3-ForcedAligner-0.6B`. These downloads can take time and require internet
 access; later runs use the local Hugging Face/model caches.
 
@@ -173,9 +175,16 @@ python shadow_practice.py
 
 ### Normal audio transcription
 
-Choose **Transcrever o áudio normalmente**. This runs English Whisper transcription,
-word timestamps, pyannote speaker diarization, and sense-group generation. It requires
-the `transcription` extra and `HUGGINGFACE_TOKEN`.
+Choose **Transcrever o áudio normalmente**, then select one of these models:
+
+- **Local — Whisper large** runs the existing model entirely on the Mac.
+- **OpenAI API — whisper-1** uploads five-minute mono FLAC chunks and requests word
+  timestamps from the OpenAI Audio API. It requires `OPENAI_API_KEY` and incurs API
+  usage charges.
+
+Both choices run local pyannote speaker diarization afterward and generate sense
+groups, so both require the `transcription` extra and `HUGGINGFACE_TOKEN`. Imported
+transcript forced alignment remains a separate option and does not use either model.
 
 ### Import a transcript and align it
 
