@@ -47,6 +47,8 @@ def processing_artifacts(audio_path: Path) -> list[Path]:
         for path in (
             audio_path.with_suffix(".words.json"),
             audio_path.with_suffix(".speaks.json"),
+            audio_path.with_suffix(".openai-transcription.checkpoint.json"),
+            audio_path.with_suffix(".openai-transcription.checkpoint.json.tmp"),
         )
         if path.is_file()
     ]

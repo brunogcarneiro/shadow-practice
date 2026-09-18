@@ -234,11 +234,18 @@ reported in the processing details.
 
 Each row displays audio duration and size. Click **Excluir…** and choose either:
 
-- Remove only generated `.words.json` and `.speaks.json` artifacts. The `.wav` remains
-  and **Processar** becomes available again.
+- Remove only generated `.words.json`, `.speaks.json`, and OpenAI transcription
+  checkpoint artifacts. The `.wav` remains and **Processar** becomes available again.
 - Remove the generated artifacts and the source `.wav` permanently.
 
 Imported `.txt` files are not deleted. Both choices require confirmation.
+
+When `whisper-1` encounters a transient TLS, connection, timeout, rate-limit, or
+server error, each five-minute block is retried up to four times with increasing
+delays. Completed blocks are checkpointed beside the recording, so starting the same
+recording again resumes at the first unfinished block. The checkpoint is removed only
+after the full processing pipeline succeeds. Changing the audio invalidates its
+checkpoint automatically.
 
 ## Diagnostic logs
 

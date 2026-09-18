@@ -10,7 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 from ..infrastructure.forced_alignment import align_transcript_file
-from ..infrastructure.openai_transcription import transcribe_recording_openai
+from ..infrastructure.openai_transcription import (
+    remove_checkpoint,
+    transcribe_recording_openai,
+)
 from ..infrastructure.transcription import transcribe_recording
 from .sense_groups import group_words_file
 
@@ -111,6 +114,8 @@ def process(
         )
 
     group_words_file(words_path, progress_callback=grouping_progress)
+    if transcript_path is None and transcription_model == "whisper-1":
+        remove_checkpoint(audio_path)
     emit(100, "complete", {"file": words_path.name}, "Processamento concluído.")
 
 

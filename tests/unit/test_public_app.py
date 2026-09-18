@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import requests
+
 from shadow_practice.application.processing_worker import emit
 from shadow_practice.config import get_settings
 from shadow_practice.infrastructure.application_logging import configure_application_logging
@@ -105,6 +107,170 @@ class PublicAppTests(unittest.TestCase):
             request = post.call_args.kwargs
             self.assertIn(("timestamp_granularities[]", "word"), request["data"])
             self.assertEqual(request["headers"]["Authorization"], "Bearer test-key")
+
+    def test_openai_whisper_retries_tls_failure(self):
+        class FakeAudio:
+            def set_channels(self, _channels):
+                return self
+
+            def set_frame_rate(self, _rate):
+                return self
+
+            def __len__(self):
+                return 1_000
+
+            def __getitem__(self, _key):
+                return self
+
+            def export(self, target, format):
+                target.write(b"flac")
+
+        response = Mock(ok=True)
+        response.json.return_value = {
+            "words": [{"word": "hello", "start": 0.2, "end": 0.7}]
+        }
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_transcriptions_url="https://openai.test/transcriptions",
+        )
+        events = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            audio.touch()
+            with (
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.AudioSegment.from_file",
+                    return_value=FakeAudio(),
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.requests.post",
+                    side_effect=[requests.exceptions.SSLError("temporary TLS error"), response],
+                ) as post,
+                patch("shadow_practice.infrastructure.openai_transcription.time.sleep") as sleep,
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.assign_speakers",
+                    side_effect=lambda _path, words, _report: words,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.validate_speaker_diarization"
+                ),
+            ):
+                transcribe_recording_openai(
+                    audio,
+                    progress_callback=lambda percent, message, data: events.append(
+                        (percent, message, data)
+                    ),
+                )
+
+            self.assertEqual(post.call_count, 2)
+            sleep.assert_called_once()
+            self.assertTrue(any("nova tentativa" in event[1] for event in events))
+            self.assertTrue(any(event[2].get("attempt") == 2 for event in events))
+
+    def test_openai_whisper_resumes_from_completed_chunk_checkpoint(self):
+        class FakeAudio:
+            def set_channels(self, _channels):
+                return self
+
+            def set_frame_rate(self, _rate):
+                return self
+
+            def __len__(self):
+                return 600_000
+
+            def __getitem__(self, _key):
+                return self
+
+            def export(self, target, format):
+                target.write(b"flac")
+
+        first = Mock(ok=True)
+        first.json.return_value = {
+            "words": [{"word": "first", "start": 0.0, "end": 0.5}]
+        }
+        second = Mock(ok=True)
+        second.json.return_value = {
+            "words": [{"word": "second", "start": 0.0, "end": 0.5}]
+        }
+        settings = types.SimpleNamespace(
+            openai_api_key="test-key",
+            openai_transcriptions_url="https://openai.test/transcriptions",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            audio.touch()
+            common_patches = (
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.AudioSegment.from_file",
+                    return_value=FakeAudio(),
+                ),
+                patch("shadow_practice.infrastructure.openai_transcription.time.sleep"),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.assign_speakers",
+                    side_effect=lambda _path, words, _report: words,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.validate_speaker_diarization"
+                ),
+            )
+            with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4]:
+                with patch(
+                    "shadow_practice.infrastructure.openai_transcription.requests.post",
+                    side_effect=[
+                        first,
+                        requests.exceptions.SSLError("TLS 1"),
+                        requests.exceptions.SSLError("TLS 2"),
+                        requests.exceptions.SSLError("TLS 3"),
+                        requests.exceptions.SSLError("TLS 4"),
+                    ],
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "after 4 attempts"):
+                        transcribe_recording_openai(audio)
+
+            events = []
+            with (
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.AudioSegment.from_file",
+                    return_value=FakeAudio(),
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.requests.post",
+                    return_value=second,
+                ) as resumed_post,
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.assign_speakers",
+                    side_effect=lambda _path, words, _report: words,
+                ),
+                patch(
+                    "shadow_practice.infrastructure.openai_transcription.validate_speaker_diarization"
+                ),
+            ):
+                output = transcribe_recording_openai(
+                    audio,
+                    progress_callback=lambda percent, message, data: events.append(
+                        (percent, message, data)
+                    ),
+                )
+
+            self.assertEqual(resumed_post.call_count, 1)
+            words = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual([word["word"] for word in words], ["first", "second"])
+            self.assertEqual(words[1]["start"], 300.0)
+            self.assertTrue(any(event[2].get("resumed") for event in events))
 
     def test_processing_events_serialize_numpy_scalars(self):
         import numpy as np
@@ -211,14 +377,15 @@ class PublicAppTests(unittest.TestCase):
             audio = Path(directory) / "sample.wav"
             words = audio.with_suffix(".words.json")
             speaks = audio.with_suffix(".speaks.json")
+            checkpoint = audio.with_suffix(".openai-transcription.checkpoint.json")
             unrelated = audio.with_suffix(".txt")
-            for path in (audio, words, speaks, unrelated):
+            for path in (audio, words, speaks, checkpoint, unrelated):
                 path.touch()
             words.write_text('[{"displayed": false}]', encoding="utf-8")
 
             self.assertTrue(is_processed_recording(audio))
-            self.assertEqual(processing_artifacts(audio), [words, speaks])
-            self.assertEqual(delete_recording_data(audio), [words, speaks])
+            self.assertEqual(processing_artifacts(audio), [words, speaks, checkpoint])
+            self.assertEqual(delete_recording_data(audio), [words, speaks, checkpoint])
             self.assertFalse(is_processed_recording(audio))
             self.assertTrue(audio.exists())
             self.assertTrue(unrelated.exists())

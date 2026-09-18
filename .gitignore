@@ -5,6 +5,7 @@ logs/
 *.wav
 *.words.json
 *.speaks.json
+*.openai-transcription.checkpoint.json*
 
 # Secrets and local configuration
 .env
