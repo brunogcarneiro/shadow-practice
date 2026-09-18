@@ -24,6 +24,7 @@ from shadow_practice.presentation.wx.launcher import (
     audio_file_details,
     delete_recording_data,
     is_processed_recording,
+    list_audio_recordings,
     processing_artifacts,
 )
 
@@ -139,6 +140,17 @@ class PublicAppTests(unittest.TestCase):
             self.assertEqual(delete_recording_data(audio, include_audio=True), [words, audio])
             self.assertFalse(audio.exists())
             self.assertTrue(unrelated.exists())
+
+    def test_audio_recordings_are_listed_case_insensitively(self):
+        with tempfile.TemporaryDirectory() as directory:
+            recordings = Path(directory)
+            lower = recordings / "older.wav"
+            upper = recordings / "newer.WAV"
+            ignored = recordings / "notes.txt"
+            for path in (lower, upper, ignored):
+                path.touch()
+
+            self.assertEqual(list_audio_recordings(recordings), [lower, upper])
 
     def test_processing_output_updates_structured_progress(self):
         frame = ShadowPracticeFrame.__new__(ShadowPracticeFrame)

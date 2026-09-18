@@ -57,9 +57,36 @@ def delete_recording_data(audio_path: Path, include_audio: bool = False) -> list
     targets = processing_artifacts(audio_path)
     if include_audio and audio_path.is_file():
         targets.append(audio_path)
+    LOGGER.info(
+        "Deleting recording data: audio=%s include_audio=%s targets=%s",
+        audio_path,
+        include_audio,
+        [str(target) for target in targets],
+    )
     for target in targets:
         target.unlink()
+    remaining = [target for target in targets if target.exists()]
+    if remaining:
+        raise OSError(
+            "Deletion did not remove: " + ", ".join(str(path) for path in remaining)
+        )
+    LOGGER.info("Recording data deleted: %s", [str(target) for target in targets])
     return targets
+
+
+def list_audio_recordings(recordings_dir: Path) -> list[Path]:
+    """List WAV recordings regardless of filename-extension casing."""
+    if not recordings_dir.is_dir():
+        return []
+    return sorted(
+        (
+            path
+            for path in recordings_dir.iterdir()
+            if path.is_file() and path.suffix.casefold() == ".wav"
+        ),
+        key=lambda recording: recording.name.casefold(),
+        reverse=True,
+    )
 
 
 def audio_file_details(audio_path: Path) -> tuple[str, str]:
@@ -216,11 +243,7 @@ class ShadowPracticeFrame(wx.Frame):
     def available_recordings(self) -> list[Path]:
         recordings_dir = get_settings().recordings_dir
         recordings_dir.mkdir(parents=True, exist_ok=True)
-        return sorted(
-            recordings_dir.glob("*.wav"),
-            key=lambda recording: recording.name.casefold(),
-            reverse=True,
-        )
+        return list_audio_recordings(recordings_dir)
 
     def refresh_recordings(self) -> None:
         self.processing_gauges.clear()
@@ -349,37 +372,23 @@ class ShadowPracticeFrame(wx.Frame):
         recording = event.GetEventObject().recording_path
         if recording in self.processing_recordings:
             return
-        choice = wx.SingleChoiceDialog(
+        choice = wx.MessageDialog(
             self,
-            f"O que deseja excluir de {recording.name}?",
+            f"O que deseja excluir de {recording.name}?\n\n"
+            "“Excluir tudo” remove permanentemente o áudio e os dados processados.",
             "Excluir dados da gravação",
-            [
-                "Somente os arquivos produzidos pelo processamento",
-                "Os arquivos produzidos e também o arquivo de áudio",
-            ],
+            wx.YES_NO | wx.CANCEL | wx.ICON_WARNING,
         )
-        choice.SetSelection(0)
-        if choice.ShowModal() != wx.ID_OK:
-            choice.Destroy()
-            return
-        include_audio = choice.GetSelection() == 1
+        choice.SetYesNoCancelLabels(
+            "Excluir tudo",
+            "Somente processamento",
+            "Cancelar",
+        )
+        selected_action = choice.ShowModal()
         choice.Destroy()
-
-        consequence = (
-            "O áudio e todos os dados processados serão excluídos permanentemente."
-            if include_audio
-            else "A transcrição e os dados de prática serão excluídos. O áudio será mantido."
-        )
-        confirmation = wx.MessageDialog(
-            self,
-            f"{consequence}\n\nDeseja continuar?",
-            "Confirmar exclusão",
-            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
-        )
-        confirmed = confirmation.ShowModal() == wx.ID_YES
-        confirmation.Destroy()
-        if not confirmed:
+        if selected_action not in (wx.ID_YES, wx.ID_NO):
             return
+        include_audio = selected_action == wx.ID_YES
         try:
             deleted = delete_recording_data(recording, include_audio=include_audio)
         except OSError as error:
