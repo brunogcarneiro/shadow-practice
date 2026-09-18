@@ -16,6 +16,7 @@ import requests
 
 from shadow_practice.application.processing_runs import (
     create_run_directory,
+    delete_processing_run,
     list_processing_runs,
     processing_root,
     run_words_path,
@@ -84,6 +85,31 @@ class PublicAppTests(unittest.TestCase):
             self.assertEqual([run.model for run in runs], ["whisper-large"] * 2)
             self.assertNotEqual(runs[0].run_id, runs[1].run_id)
             self.assertGreater(runs[0].started_at, runs[1].started_at)
+
+            deleted = delete_processing_run(audio, runs[0])
+            remaining = list_processing_runs(audio)
+
+            self.assertEqual(deleted, [second])
+            self.assertFalse(second.exists())
+            self.assertTrue(first.exists())
+            self.assertEqual([run.run_id for run in remaining], [first.name])
+
+    def test_deleting_legacy_processing_preserves_audio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            words = audio.with_suffix(".words.json")
+            speaks = audio.with_suffix(".speaks.json")
+            audio.touch()
+            words.write_text('[{"displayed": false}]', encoding="utf-8")
+            speaks.touch()
+
+            run = list_processing_runs(audio)[0]
+            deleted = delete_processing_run(audio, run)
+
+            self.assertEqual(deleted, [words, speaks])
+            self.assertTrue(audio.exists())
+            self.assertFalse(words.exists())
+            self.assertFalse(speaks.exists())
 
     def test_api_processing_metadata_records_stage_time_and_estimated_cost(self):
         def fake_transcription(_audio, progress_callback, output_path):

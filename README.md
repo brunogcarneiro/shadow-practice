@@ -256,9 +256,10 @@ report the number of words in each category.
 
 Each row displays audio duration and size. Click **Excluir…** and choose either:
 
-- Remove the entire processing history, including every run's words, speaks, metadata,
-  and checkpoints. The `.wav` remains available for new processing.
-- Remove the entire processing history and the source `.wav` permanently.
+- One specific processing result, identified by model and date/time. Other results and
+  the source audio are preserved.
+- Every processing result while preserving the source `.wav`.
+- The source `.wav` together with every processing result.
 
 Imported `.txt` files are not deleted. Both choices require confirmation.
 

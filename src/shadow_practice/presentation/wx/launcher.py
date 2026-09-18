@@ -17,6 +17,7 @@ import wx
 
 from ...application.processing_runs import (
     create_run_directory,
+    delete_processing_run,
     list_processing_runs,
     processing_root,
 )
@@ -392,26 +393,55 @@ class ShadowPracticeFrame(wx.Frame):
         recording = event.GetEventObject().recording_path
         if recording in self.processing_recordings:
             return
-        choice = wx.MessageDialog(
+        runs = list_processing_runs(recording)
+        options = [f"Processamento: {run.label}" for run in runs]
+        if runs:
+            options.extend(
+                (
+                    "Todos os processamentos (preservar o áudio)",
+                    "Áudio e todos os processamentos",
+                )
+            )
+        else:
+            options.append("Áudio")
+        choice = wx.SingleChoiceDialog(
             self,
-            f"O que deseja excluir de {recording.name}?\n\n"
-            "“Excluir tudo” remove permanentemente o áudio e os dados processados.",
+            f"Selecione exatamente o que deseja excluir de {recording.name}:",
             "Excluir dados da gravação",
-            wx.YES_NO | wx.CANCEL | wx.ICON_WARNING,
+            options,
         )
-        choice.SetYesNoCancelLabels(
-            "Excluir tudo",
-            "Somente processamento",
-            "Cancelar",
-        )
-        selected_action = choice.ShowModal()
-        choice.Destroy()
-        if selected_action not in (wx.ID_YES, wx.ID_NO):
+        if choice.ShowModal() != wx.ID_OK:
+            choice.Destroy()
             return
-        include_audio = selected_action == wx.ID_YES
+        selected_index = choice.GetSelection()
+        choice.Destroy()
+
+        selected_run = runs[selected_index] if selected_index < len(runs) else None
+        include_audio = selected_run is None and selected_index == len(options) - 1
+        target_description = (
+            selected_run.label
+            if selected_run is not None
+            else "o áudio e todos os processamentos"
+            if include_audio
+            else "todos os processamentos"
+        )
+        confirmation = wx.MessageDialog(
+            self,
+            f"Confirma a exclusão de {target_description}?",
+            "Confirmar exclusão",
+            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+        )
+        confirmed = confirmation.ShowModal() == wx.ID_YES
+        confirmation.Destroy()
+        if not confirmed:
+            return
         try:
-            deleted = delete_recording_data(recording, include_audio=include_audio)
-        except OSError as error:
+            deleted = (
+                delete_processing_run(recording, selected_run)
+                if selected_run is not None
+                else delete_recording_data(recording, include_audio=include_audio)
+            )
+        except (OSError, ValueError) as error:
             wx.MessageBox(
                 f"Não foi possível excluir os dados.\n\n{error}",
                 "Erro na exclusão",
@@ -426,7 +456,9 @@ class ShadowPracticeFrame(wx.Frame):
         if process_button is not None and not process_button.IsBeingDeleted():
             process_button.Enable(not include_audio)
         if self.selected_recording == recording:
-            self.practice_button.Disable()
+            self.practice_button.Enable(
+                not include_audio and bool(list_processing_runs(recording))
+            )
         # Rebuilding here destroys the button that is still dispatching this
         # click event. Defer it to avoid stale/disabled controls on wx/Cocoa.
         wx.CallAfter(self.refresh_recordings)

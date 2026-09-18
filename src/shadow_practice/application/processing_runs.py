@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -105,3 +106,31 @@ def list_processing_runs(audio_path: Path) -> list[ProcessingRun]:
             )
         )
     return sorted(runs, key=lambda run: run.started_at, reverse=True)
+
+
+def delete_processing_run(audio_path: Path, run: ProcessingRun) -> list[Path]:
+    """Delete exactly one completed run without affecting sibling results."""
+    if run.metadata_path is None:
+        targets = [
+            path
+            for path in (
+                audio_path.with_suffix(".words.json"),
+                audio_path.with_suffix(".speaks.json"),
+                audio_path.with_suffix(".openai-transcription.checkpoint.json"),
+                audio_path.with_suffix(".openai-transcription.checkpoint.json.tmp"),
+            )
+            if path.is_file()
+        ]
+        for target in targets:
+            target.unlink()
+        return targets
+
+    run_dir = run.metadata_path.parent
+    root = processing_root(audio_path)
+    if run_dir.parent.resolve() != root.resolve():
+        raise ValueError("Processing run does not belong to this audio file.")
+    if run_dir.is_dir():
+        shutil.rmtree(run_dir)
+    if root.is_dir() and not any(root.iterdir()):
+        root.rmdir()
+    return [run_dir]
