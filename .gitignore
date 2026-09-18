@@ -6,6 +6,7 @@ logs/
 *.words.json
 *.speaks.json
 *.openai-transcription.checkpoint.json*
+*.processings/
 
 # Secrets and local configuration
 .env

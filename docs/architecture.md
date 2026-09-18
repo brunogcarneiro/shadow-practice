@@ -4,6 +4,7 @@ The package follows a dependency-inward layout:
 
 - `domain`: transcript, playback, waveform, and speaking-session rules with no GUI.
 - `application`: controllers and sense-group/model task orchestration.
+- `application.processing_runs`: one-to-many processing history and result discovery.
 - `infrastructure`: JSON persistence, audio adapters, recording, transcription, and TTS.
 - Local Whisper and OpenAI `whisper-1` are separate transcription adapters; both feed
   timestamped words into the shared local speaker-diarization component.
@@ -15,3 +16,9 @@ The package follows a dependency-inward layout:
 adds `src/` only for source-checkout compatibility and delegates to that same function.
 Heavy transcription and TTS dependencies are imported lazily so basic imports and tests
 do not initialize models or contact external services.
+
+Each audio owns a sibling `<stem>.processings/` directory. Every execution writes to
+a distinct model-and-timestamp run directory containing its own words, speaks, and
+metadata files. The launcher discovers completed runs and passes the selected words
+artifact to the existing practice window. Legacy sibling `.words.json` files remain
+readable as a synthetic `legacy` run.

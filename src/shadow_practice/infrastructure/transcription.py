@@ -16,6 +16,7 @@ def transcribe_recording(
     audio_path: str | Path,
     model_name: str = "large",
     progress_callback: ProgressCallback | None = None,
+    output_path: str | Path | None = None,
 ) -> Path:
     """Gera o arquivo bruto ``.words.json`` para uma gravação WAV."""
     report = progress_callback or (lambda _percent, _message, _data: None)
@@ -69,7 +70,9 @@ def transcribe_recording(
 
     words = assign_speakers(audio_path, words, report)
 
-    output_path = audio_path.with_suffix(".words.json")
+    output_path = (
+        Path(output_path) if output_path is not None else audio_path.with_suffix(".words.json")
+    )
     with output_path.open("w", encoding="utf-8") as output:
         json.dump(words, output, ensure_ascii=False, indent=2)
     report(90, "Transcrição concluída…", {"words": len(words)})

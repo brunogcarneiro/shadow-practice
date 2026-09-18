@@ -14,7 +14,13 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from shadow_practice.application.processing_worker import emit
+from shadow_practice.application.processing_runs import (
+    create_run_directory,
+    list_processing_runs,
+    processing_root,
+    run_words_path,
+)
+from shadow_practice.application.processing_worker import emit, process
 from shadow_practice.config import get_settings
 from shadow_practice.infrastructure.application_logging import configure_application_logging
 from shadow_practice.infrastructure.forced_alignment import (
@@ -39,6 +45,96 @@ from shadow_practice.presentation.wx.launcher import (
 
 
 class PublicAppTests(unittest.TestCase):
+    def test_multiple_processing_runs_for_same_model_are_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            audio.touch()
+            first = create_run_directory(
+                audio,
+                "whisper-large",
+                datetime(2026, 9, 18, 10, 0, tzinfo=timezone.utc),
+            )
+            second = create_run_directory(
+                audio,
+                "whisper-large",
+                datetime(2026, 9, 18, 11, 0, tzinfo=timezone.utc),
+            )
+            for run_dir, started_at in (
+                (first, "2026-09-18T10:00:00+00:00"),
+                (second, "2026-09-18T11:00:00+00:00"),
+            ):
+                run_words_path(run_dir).write_text(
+                    '[{"displayed": false}, {"word": "hello"}]', encoding="utf-8"
+                )
+                (run_dir / "metadata.json").write_text(
+                    json.dumps(
+                        {
+                            "id": run_dir.name,
+                            "model": "whisper-large",
+                            "started_at": started_at,
+                            "status": "completed",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            runs = list_processing_runs(audio)
+
+            self.assertEqual(len(runs), 2)
+            self.assertEqual([run.model for run in runs], ["whisper-large"] * 2)
+            self.assertNotEqual(runs[0].run_id, runs[1].run_id)
+            self.assertGreater(runs[0].started_at, runs[1].started_at)
+
+    def test_api_processing_metadata_records_stage_time_and_estimated_cost(self):
+        def fake_transcription(_audio, progress_callback, output_path):
+            progress_callback(20, "Transcrevendo áudio…", {})
+            progress_callback(70, "Identificando falantes…", {})
+            Path(output_path).write_text(
+                '[{"word":"hello","start":0,"end":1,"speaker":"A"}]',
+                encoding="utf-8",
+            )
+            return Path(output_path)
+
+        def fake_grouping(words_path, progress_callback):
+            Path(words_path).write_text(
+                '[{"displayed":false},{"word":"hello","start":0,"end":1,"speaker":"A"}]',
+                encoding="utf-8",
+            )
+            progress_callback(1, 1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sample.wav"
+            audio.write_bytes(b"audio")
+            run_dir = create_run_directory(audio, "whisper-1")
+            with (
+                patch(
+                    "shadow_practice.application.processing_worker.sf.info",
+                    return_value=types.SimpleNamespace(duration=120.0),
+                ),
+                patch(
+                    "shadow_practice.application.processing_worker.transcribe_recording_openai",
+                    side_effect=fake_transcription,
+                ),
+                patch(
+                    "shadow_practice.application.processing_worker.group_words_file",
+                    side_effect=fake_grouping,
+                ),
+                patch(
+                    "shadow_practice.application.processing_worker.remove_checkpoint"
+                ),
+                patch.dict(os.environ, {"OPENAI_WHISPER_1_USD_PER_MINUTE": "0.006"}),
+                patch("sys.stdout", io.StringIO()),
+            ):
+                process(audio, transcription_model="whisper-1", run_dir=run_dir)
+
+            metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["status"], "completed")
+            self.assertEqual(metadata["model"], "whisper-1")
+            self.assertEqual(metadata["stages"]["transcription"]["cost"]["amount"], 0.012)
+            self.assertTrue(metadata["stages"]["transcription"]["cost"]["estimated"])
+            self.assertIn("diarization", metadata["stages"])
+            self.assertIn("sense-groups", metadata["stages"])
+
     def test_openai_whisper_transcription_keeps_word_timestamps(self):
         class FakeAudio:
             def set_channels(self, _channels):
@@ -382,11 +478,19 @@ class PublicAppTests(unittest.TestCase):
             unrelated = audio.with_suffix(".txt")
             for path in (audio, words, speaks, checkpoint, unrelated):
                 path.touch()
+            run_root = processing_root(audio)
+            run_root.mkdir()
+            (run_root / "saved-result.txt").touch()
             words.write_text('[{"displayed": false}]', encoding="utf-8")
 
             self.assertTrue(is_processed_recording(audio))
-            self.assertEqual(processing_artifacts(audio), [words, speaks, checkpoint])
-            self.assertEqual(delete_recording_data(audio), [words, speaks, checkpoint])
+            self.assertEqual(
+                processing_artifacts(audio), [words, speaks, checkpoint, run_root]
+            )
+            self.assertEqual(
+                delete_recording_data(audio), [words, speaks, checkpoint, run_root]
+            )
+            self.assertFalse(run_root.exists())
             self.assertFalse(is_processed_recording(audio))
             self.assertTrue(audio.exists())
             self.assertTrue(unrelated.exists())
@@ -474,7 +578,11 @@ class PublicAppTests(unittest.TestCase):
 
     def test_json_schemas_are_valid_json_objects(self):
         root = Path(__file__).resolve().parents[2]
-        for name in ("words.schema.json", "speaks.schema.json"):
+        for name in (
+            "words.schema.json",
+            "speaks.schema.json",
+            "processing-metadata.schema.json",
+        ):
             payload = json.loads((root / "docs" / "schema" / name).read_text(encoding="utf-8"))
             self.assertEqual(payload["$schema"], "https://json-schema.org/draft/2020-12/schema")
 

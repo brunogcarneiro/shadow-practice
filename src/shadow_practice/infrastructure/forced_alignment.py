@@ -183,6 +183,7 @@ def align_transcript_file(
     audio_path: Path,
     transcript_path: Path,
     progress_callback: ProgressCallback | None = None,
+    output_path: Path | None = None,
 ) -> Path:
     """Create a raw ``.words.json`` from an existing transcript and audio."""
     import soundfile as sf
@@ -288,6 +289,6 @@ def align_transcript_file(
             },
         )
 
-    output_path = audio_path.with_suffix(".words.json")
+    output_path = output_path or audio_path.with_suffix(".words.json")
     output_path.write_text(json.dumps(words, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path

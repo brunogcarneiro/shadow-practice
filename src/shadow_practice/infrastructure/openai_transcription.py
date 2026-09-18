@@ -21,7 +21,9 @@ MAX_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 
 
-def checkpoint_path(audio_path: Path) -> Path:
+def checkpoint_path(audio_path: Path, output_path: Path | None = None) -> Path:
+    if output_path is not None:
+        return output_path.parent / ".openai-transcription.checkpoint.json"
     return audio_path.with_suffix(".openai-transcription.checkpoint.json")
 
 
@@ -35,8 +37,10 @@ def _audio_identity(audio_path: Path) -> dict:
     }
 
 
-def _load_checkpoint(audio_path: Path, chunk_count: int) -> tuple[int, list[dict]]:
-    path = checkpoint_path(audio_path)
+def _load_checkpoint(
+    audio_path: Path, chunk_count: int, output_path: Path | None = None
+) -> tuple[int, list[dict]]:
+    path = checkpoint_path(audio_path, output_path)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         completed = int(payload["completed_chunks"])
@@ -53,23 +57,24 @@ def _load_checkpoint(audio_path: Path, chunk_count: int) -> tuple[int, list[dict
 
 
 def _save_checkpoint(
-    audio_path: Path, completed_chunks: int, words: list[dict]
+    audio_path: Path,
+    completed_chunks: int,
+    words: list[dict],
+    output_path: Path | None = None,
 ) -> None:
-    path = checkpoint_path(audio_path)
+    path = checkpoint_path(audio_path, output_path)
     temporary_path = path.with_suffix(path.suffix + ".tmp")
     payload = {
         "audio": _audio_identity(audio_path),
         "completed_chunks": completed_chunks,
         "words": words,
     }
-    temporary_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    temporary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary_path.replace(path)
 
 
-def remove_checkpoint(audio_path: Path) -> None:
-    path = checkpoint_path(audio_path)
+def remove_checkpoint(audio_path: Path, output_path: Path | None = None) -> None:
+    path = checkpoint_path(audio_path, output_path)
     if path.exists():
         path.unlink()
 
@@ -129,17 +134,13 @@ def _transcribe_chunk(
             if response.ok:
                 return response.json()
             if response.status_code not in RETRYABLE_STATUS_CODES:
-                raise RuntimeError(
-                    f"OpenAI whisper-1 failed: {_openai_error(response)}"
-                )
+                raise RuntimeError(f"OpenAI whisper-1 failed: {_openai_error(response)}")
             error = f"HTTP {response.status_code}: {_openai_error(response)}"
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             error = str(exc)
 
         if attempt == MAX_ATTEMPTS:
-            raise RuntimeError(
-                f"OpenAI whisper-1 failed after {MAX_ATTEMPTS} attempts: {error}"
-            )
+            raise RuntimeError(f"OpenAI whisper-1 failed after {MAX_ATTEMPTS} attempts: {error}")
         delay = _retry_delay(attempt, response)
         report(
             10 + round(45 * chunk_index / chunk_count),
@@ -169,9 +170,12 @@ def _openai_error(response: requests.Response) -> str:
 def transcribe_recording_openai(
     audio_path: str | Path,
     progress_callback: ProgressCallback | None = None,
+    output_path: str | Path | None = None,
 ) -> Path:
     report = progress_callback or (lambda _percent, _message, _data: None)
     audio_path = Path(audio_path)
+    checkpoint_output_path = Path(output_path) if output_path is not None else None
+    output_path = checkpoint_output_path or audio_path.with_suffix(".words.json")
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for whisper-1 transcription.")
@@ -180,7 +184,9 @@ def transcribe_recording_openai(
     report(5, "Preparando áudio para whisper-1…", {"model": "whisper-1"})
     audio = AudioSegment.from_file(audio_path).set_channels(1).set_frame_rate(16_000)
     chunk_count = max(1, (len(audio) + CHUNK_MS - 1) // CHUNK_MS)
-    completed_chunks, words = _load_checkpoint(audio_path, chunk_count)
+    completed_chunks, words = _load_checkpoint(
+        audio_path, chunk_count, checkpoint_output_path
+    )
     if completed_chunks:
         report(
             10 + round(45 * completed_chunks / chunk_count),
@@ -216,7 +222,7 @@ def transcribe_recording_openai(
                         "end": round(offset + float(item["end"]), 3),
                     }
                 )
-        _save_checkpoint(audio_path, chunk_index + 1, words)
+        _save_checkpoint(audio_path, chunk_index + 1, words, checkpoint_output_path)
         report(
             10 + round(45 * (chunk_index + 1) / chunk_count),
             f"Bloco {chunk_index + 1}/{chunk_count} transcrito e salvo.",
@@ -231,7 +237,6 @@ def transcribe_recording_openai(
         raise RuntimeError("OpenAI whisper-1 returned no timestamped words.")
     report(58, "Transcrição whisper-1 concluída…", {"words": len(words)})
     words = assign_speakers(audio_path, words, report)
-    output_path = audio_path.with_suffix(".words.json")
     output_path.write_text(json.dumps(words, ensure_ascii=False, indent=2), encoding="utf-8")
     report(90, "Transcrição concluída…", {"words": len(words), "model": "whisper-1"})
     return output_path

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/brunogcarneiro/shadow-practice/blob/main/docs/schema/processing-metadata.schema.json",
+  "title": "Shadow Practice processing metadata",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "audio",
+    "model",
+    "provider",
+    "uses_api",
+    "mode",
+    "started_at",
+    "status",
+    "stages",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string"},
+    "audio": {
+      "type": "object",
+      "required": ["name", "size_bytes", "duration_seconds"],
+      "properties": {
+        "name": {"type": "string"},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "duration_seconds": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "model": {"type": "string"},
+    "provider": {"type": "string"},
+    "uses_api": {"type": "boolean"},
+    "mode": {"enum": ["transcription", "forced-alignment"]},
+    "source_transcript": {"type": ["string", "null"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": ["string", "null"], "format": "date-time"},
+    "status": {"enum": ["running", "completed", "failed", "interrupted"]},
+    "total_duration_seconds": {"type": ["number", "null"], "minimum": 0},
+    "stages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["duration_seconds", "cost"],
+        "properties": {
+          "duration_seconds": {"type": "number", "minimum": 0},
+          "cost": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "required": ["amount", "currency", "estimated", "rate", "rate_unit"],
+                "properties": {
+                  "amount": {"type": "number", "minimum": 0},
+                  "currency": {"type": "string"},
+                  "estimated": {"type": "boolean"},
+                  "rate": {"type": "number", "minimum": 0},
+                  "rate_unit": {"type": "string"}
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "artifacts": {"type": "object"}
+  },
+  "additionalProperties": true
+}

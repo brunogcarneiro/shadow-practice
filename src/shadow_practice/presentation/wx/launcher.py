@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -14,6 +15,11 @@ from pathlib import Path
 import soundfile as sf
 import wx
 
+from ...application.processing_runs import (
+    create_run_directory,
+    list_processing_runs,
+    processing_root,
+)
 from ...config import get_settings
 from ...infrastructure.recording import RecordingController
 from .main_frame import TranscriptPlayer
@@ -23,26 +29,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 def is_processed_recording(audio_path: Path) -> bool:
-    """Indica se a gravação possui uma transcrição já agrupada."""
-    words_path = audio_path.with_suffix(".words.json")
-    if not words_path.is_file():
-        return False
-    try:
-        with words_path.open(encoding="utf-8") as source:
-            payload = json.load(source)
-    except (OSError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, list) and any(
-        isinstance(item, dict) and (
-            "displayed" in item or "linebreak" in item
-        )
-        for item in payload
-    )
+    """Indicate whether at least one completed processing run is available."""
+    return bool(list_processing_runs(audio_path))
 
 
 def processing_artifacts(audio_path: Path) -> list[Path]:
     """Return processing-owned files associated with an audio recording."""
-    return [
+    artifacts = [
         path
         for path in (
             audio_path.with_suffix(".words.json"),
@@ -52,6 +45,10 @@ def processing_artifacts(audio_path: Path) -> list[Path]:
         )
         if path.is_file()
     ]
+    root = processing_root(audio_path)
+    if root.is_dir():
+        artifacts.append(root)
+    return artifacts
 
 
 def delete_recording_data(audio_path: Path, include_audio: bool = False) -> list[Path]:
@@ -66,12 +63,13 @@ def delete_recording_data(audio_path: Path, include_audio: bool = False) -> list
         [str(target) for target in targets],
     )
     for target in targets:
-        target.unlink()
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
     remaining = [target for target in targets if target.exists()]
     if remaining:
-        raise OSError(
-            "Deletion did not remove: " + ", ".join(str(path) for path in remaining)
-        )
+        raise OSError("Deletion did not remove: " + ", ".join(str(path) for path in remaining))
     LOGGER.info("Recording data deleted: %s", [str(target) for target in targets])
     return targets
 
@@ -98,9 +96,7 @@ def audio_file_details(audio_path: Path) -> tuple[str, str]:
         hours, remainder = divmod(duration, 3600)
         minutes, seconds = divmod(remainder, 60)
         duration_label = (
-            f"{hours}:{minutes:02d}:{seconds:02d}"
-            if hours
-            else f"{minutes}:{seconds:02d}"
+            f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
         )
         size = audio_path.stat().st_size
     except (OSError, RuntimeError, ValueError):
@@ -288,7 +284,7 @@ class ShadowPracticeFrame(wx.Frame):
         )
 
         processing = recording in self.processing_recordings
-        processed = is_processed_recording(recording)
+        completed_runs = list_processing_runs(recording)
         if processing:
             percent, message = self.processing_progress.get(recording, (1, "Preparando…"))
             progress_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -309,9 +305,14 @@ class ShadowPracticeFrame(wx.Frame):
             sizer.Add(stop_button, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
             sizer.Add(details_button, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         else:
+            sizer.Add(
+                wx.StaticText(row, label=f"{len(completed_runs)} resultado(s)"),
+                0,
+                wx.ALL | wx.ALIGN_CENTER_VERTICAL,
+                4,
+            )
             process_button = wx.Button(row, label="Processar", size=(105, -1))
             process_button.recording_path = recording
-            process_button.Enable(not processed)
             process_button.Bind(wx.EVT_BUTTON, self.on_process_recording)
             self.process_buttons[recording] = process_button
             sizer.Add(process_button, 0, wx.ALL, 4)
@@ -337,7 +338,7 @@ class ShadowPracticeFrame(wx.Frame):
 
     def on_process_recording(self, event: wx.CommandEvent) -> None:
         recording = event.GetEventObject().recording_path
-        if recording in self.processing_recordings or is_processed_recording(recording):
+        if recording in self.processing_recordings:
             return
         choice = wx.SingleChoiceDialog(
             self,
@@ -382,9 +383,7 @@ class ShadowPracticeFrame(wx.Frame):
             if model_dialog.ShowModal() != wx.ID_OK:
                 model_dialog.Destroy()
                 return
-            transcription_model = (
-                "whisper-1" if model_dialog.GetSelection() == 1 else "local"
-            )
+            transcription_model = "whisper-1" if model_dialog.GetSelection() == 1 else "local"
             model_dialog.Destroy()
 
         self._start_processing(recording, transcript_path, transcription_model)
@@ -425,7 +424,7 @@ class ShadowPracticeFrame(wx.Frame):
         self.processing_logs.pop(recording, None)
         process_button = self.process_buttons.get(recording)
         if process_button is not None and not process_button.IsBeingDeleted():
-            process_button.Enable(not include_audio and not is_processed_recording(recording))
+            process_button.Enable(not include_audio)
         if self.selected_recording == recording:
             self.practice_button.Disable()
         # Rebuilding here destroys the button that is still dispatching this
@@ -445,6 +444,14 @@ class ShadowPracticeFrame(wx.Frame):
         transcript_path: Path | None = None,
         transcription_model: str = "local",
     ) -> None:
+        model = (
+            "qwen3-forced-aligner-0.6b"
+            if transcript_path is not None
+            else "whisper-1"
+            if transcription_model == "whisper-1"
+            else "whisper-large"
+        )
+        run_dir = create_run_directory(recording, model)
         self.processing_recordings.add(recording)
         mode = "alinhamento forçado" if transcript_path is not None else "transcrição"
         self.processing_progress[recording] = (1, f"Preparando {mode}…")
@@ -454,7 +461,7 @@ class ShadowPracticeFrame(wx.Frame):
         self.refresh_recordings()
         threading.Thread(
             target=self._run_processing_subprocess,
-            args=(recording, transcript_path, transcription_model),
+            args=(recording, transcript_path, transcription_model, run_dir),
             daemon=True,
             name=f"process-{recording.stem}",
         ).start()
@@ -464,6 +471,7 @@ class ShadowPracticeFrame(wx.Frame):
         recording: Path,
         transcript_path: Path | None = None,
         transcription_model: str = "local",
+        run_dir: Path | None = None,
     ) -> None:
         source_root = Path(__file__).resolve().parents[3]
         environment = os.environ.copy()
@@ -478,6 +486,8 @@ class ShadowPracticeFrame(wx.Frame):
                 "shadow_practice.application.processing_worker",
                 str(recording.resolve()),
             ]
+            if run_dir is not None:
+                command.extend(("--run-dir", str(run_dir.resolve())))
             if transcript_path is not None:
                 command.extend(("--transcript", str(transcript_path.resolve())))
             else:
@@ -578,9 +588,7 @@ class ShadowPracticeFrame(wx.Frame):
         frame.Show()
         frame.Raise()
 
-    def _set_processing_progress(
-        self, recording: Path, percent: int, message: str
-    ) -> None:
+    def _set_processing_progress(self, recording: Path, percent: int, message: str) -> None:
         percent = max(0, min(100, int(percent)))
         self.processing_progress[recording] = (percent, message)
         gauge = self.processing_gauges.get(recording)
@@ -605,9 +613,7 @@ class ShadowPracticeFrame(wx.Frame):
         self.processing_cancelled.discard(recording)
         effective_error = detailed_error or error
         if effective_error and not cancelled:
-            LOGGER.error(
-                "Processing process failed for %s: %s", recording.name, effective_error
-            )
+            LOGGER.error("Processing process failed for %s: %s", recording.name, effective_error)
             wx.MessageBox(
                 f"Não foi possível processar {recording.name}.\n\n{effective_error}",
                 "Erro no processamento",
@@ -617,13 +623,28 @@ class ShadowPracticeFrame(wx.Frame):
 
     def on_practice_selected(self, event: wx.CommandEvent) -> None:
         recording = self.selected_recording
-        if recording is None or not is_processed_recording(recording):
+        if recording is None:
             return
+        runs = list_processing_runs(recording)
+        if not runs:
+            return
+        choice = wx.SingleChoiceDialog(
+            self,
+            "Qual resultado de processamento deseja utilizar?",
+            "Escolher processamento",
+            [run.label for run in runs],
+        )
+        choice.SetSelection(0)
+        if choice.ShowModal() != wx.ID_OK:
+            choice.Destroy()
+            return
+        selected_run = runs[choice.GetSelection()]
+        choice.Destroy()
         self.Hide()
         self.player_frame = TranscriptPlayer(
             None,
-            f"Shadow Practice — {recording.name}",
-            str(recording.with_suffix(".words.json")),
+            f"Shadow Practice — {recording.name} — {selected_run.label}",
+            str(selected_run.words_path),
             str(recording),
         )
         self.player_frame.Bind(wx.EVT_CLOSE, self.on_player_close)

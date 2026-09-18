@@ -186,6 +186,21 @@ Both choices run local pyannote speaker diarization afterward and generate sense
 groups, so both require the `transcription` extra and `HUGGINGFACE_TOKEN`. Imported
 transcript forced alignment remains a separate option and does not use either model.
 
+Every processing attempt creates a separate result identified by model and start
+time. Processing the same audio repeatedly, including with the same model, never
+overwrites a previous completed result. Click **Praticar gravação selecionada** and
+choose the result to use. Each run stores `result.words.json`, an optional
+`result.speaks.json`, and `metadata.json` under
+`<audio-name>.processings/<model>_<timestamp>/`.
+
+The metadata records total elapsed time and elapsed time for preparation,
+transcription or forced alignment, diarization, and sense-group generation. Local
+stages have no monetary cost. For `whisper-1`, the transcription stage records an
+estimated USD cost using the audio duration and the price captured at processing
+time. The default is the [documented USD 0.006 per audio
+minute](https://developers.openai.com/api/docs/models/whisper-1); override the pricing
+snapshot with `OPENAI_WHISPER_1_USD_PER_MINUTE` if OpenAI pricing changes.
+
 ### Import a transcript and align it
 
 Choose **Importar transcrição e alinhar ao áudio**, then select a UTF-8 text file. This
@@ -241,9 +256,9 @@ report the number of words in each category.
 
 Each row displays audio duration and size. Click **Excluir…** and choose either:
 
-- Remove only generated `.words.json`, `.speaks.json`, and OpenAI transcription
-  checkpoint artifacts. The `.wav` remains and **Processar** becomes available again.
-- Remove the generated artifacts and the source `.wav` permanently.
+- Remove the entire processing history, including every run's words, speaks, metadata,
+  and checkpoints. The `.wav` remains available for new processing.
+- Remove the entire processing history and the source `.wav` permanently.
 
 Imported `.txt` files are not deleted. Both choices require confirmation.
 
