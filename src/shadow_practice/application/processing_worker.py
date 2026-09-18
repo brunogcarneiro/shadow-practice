@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import numbers
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,22 @@ from pathlib import Path
 from ..infrastructure.forced_alignment import align_transcript_file
 from ..infrastructure.transcription import transcribe_recording
 from .sense_groups import group_words_file
+
+
+def _json_default(value):
+    """Normalize scalar values emitted by scientific Python libraries."""
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        return float(value)
+    if isinstance(value, Path):
+        return str(value)
+    item = getattr(value, "item", None)
+    if callable(item):
+        scalar = item()
+        if scalar is not value:
+            return scalar
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def emit(percent: int, stage: str, data: dict, description: str) -> None:
@@ -21,7 +38,7 @@ def emit(percent: int, stage: str, data: dict, description: str) -> None:
         "data": data,
         "description": description,
     }
-    print(json.dumps(event, ensure_ascii=False), flush=True)
+    print(json.dumps(event, ensure_ascii=False, default=_json_default), flush=True)
 
 
 def process(audio_path: Path, transcript_path: Path | None = None) -> None:

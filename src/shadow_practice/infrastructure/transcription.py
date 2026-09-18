@@ -84,8 +84,8 @@ def transcribe_recording(
                 "Identificando falantes…",
                 {
                     "diarization_step": step_name,
-                    "completed": completed,
-                    "total": total,
+                    "completed": int(completed) if completed is not None else None,
+                    "total": int(total) if total is not None else None,
                 },
             )
 

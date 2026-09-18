@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from shadow_practice.application.processing_worker import emit
 from shadow_practice.config import get_settings
 from shadow_practice.infrastructure.application_logging import configure_application_logging
 from shadow_practice.infrastructure.forced_alignment import (
@@ -30,6 +32,17 @@ from shadow_practice.presentation.wx.launcher import (
 
 
 class PublicAppTests(unittest.TestCase):
+    def test_processing_events_serialize_numpy_scalars(self):
+        import numpy as np
+
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            emit(73, "transcription", {"completed": np.int64(4)}, "Working")
+
+        event = json.loads(output.getvalue())
+        self.assertEqual(event["percent"], 73)
+        self.assertEqual(event["data"]["completed"], 4)
+
     def test_compatibility_launcher_prioritizes_the_src_package(self):
         project_root = Path(__file__).resolve().parents[2]
         source_root = str(project_root / "src")
